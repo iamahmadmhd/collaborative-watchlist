@@ -2,17 +2,18 @@ import { defineBackend } from '@aws-amplify/backend';
 import { auth } from './auth/resource';
 import { data } from './data/resource';
 import { postConfirmation } from './functions/post-confirmation/resource';
+import { claimHandle } from './functions/claim-handle/resource';
 // TODO: import remaining function resources once implemented:
 // import { tmdbProxy } from "./functions/tmdb-proxy/resource";
 // import { membership } from "./functions/membership/resource";
-// import { claimHandle } from "./functions/claim-handle/resource";
 // import { permissionFanout } from "./functions/permission-fanout/resource";
 
 const backend = defineBackend({
     auth,
     data,
     postConfirmation,
-    // tmdbProxy, membership, claimHandle, permissionFanout,
+    claimHandle,
+    // tmdbProxy, membership, permissionFanout,
 });
 
 // TODO (System Design §4.5): CDK escape hatch to enable a DynamoDB stream on the

@@ -1,5 +1,6 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
 import { postConfirmation } from '../functions/post-confirmation/resource';
+import { claimHandle } from '../functions/claim-handle/resource';
 
 // Models below follow System Design §5.1 (Data Design) exactly. Before changing a
 // key structure or auth rule, re-read §4.4 (Authorization Model) and ADR-001 — the
@@ -29,16 +30,24 @@ const schema = a
             ]),
 
         // Uniqueness sentinel for @handles (FR-AUTH-4, ADR-008). Conditional write
-        // (attribute_not_exists) happens in the claim-handle function, not here.
+        // (attribute_not_exists) happens implicitly in claim-handle's Handle.create()
+        // call — that's the standard behaviour of Amplify's generated create resolver
+        // against this model's primary key, the handle string itself.
         Handle: a
             .model({
-                handle: a.string().required(), // primary key
+                handle: a.string().required(),
                 userId: a.string().required(),
             })
+            .identifier(['handle']) // load-bearing: without this, Amplify injects an
+            // auto-generated `id` as the real primary key instead, and Handle.create()'s
+            // conditional check becomes attribute_not_exists(id) — always true for a new
+            // row, i.e. no uniqueness protection at all. FR-AUTH-4 / V-1 depend on `handle`
+            // itself being the identifier.
             .authorization((allow) => [
                 allow.authenticated().to(['read']),
-                // Only the claim-handle function writes this table.
-                // TODO: allow.resource(claimHandleFn) once the function resource exists.
+                // No user-facing write rule exists on this model at all. The only writer
+                // is claim-handle, via the schema-level allow.resource(claimHandle) grant
+                // below — that's what makes it structurally the only writer, not discipline.
             ]),
 
         Watchlist: a
@@ -132,6 +141,22 @@ const schema = a
         // TODO: a.query(...).handler(a.handler.function(tmdbProxyFn)).authorization(allow => [allow.authenticated()])
         //       Note: allow.authenticated() only. allow.guest() would reopen the anonymous
         //       surface removed in ADR-009 and fail V-10.
+
+        // FR-AUTH-3/4, ADR-008, V-1. success:false + error distinguishes the three
+        // rejection reasons so the client doesn't have to parse GraphQL error strings
+        // (System Design §2.5 — the client must handle server rejection gracefully
+        // even after its own async availability check passed).
+        ClaimHandleResult: a.customType({
+            success: a.boolean().required(),
+            handle: a.string(), // set only when success is true
+            error: a.enum(['INVALID_FORMAT', 'ALREADY_CLAIMED', 'ALREADY_TAKEN']),
+        }),
+        claimHandle: a
+            .mutation()
+            .arguments({ handle: a.string().required() })
+            .returns(a.ref('ClaimHandleResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(claimHandle)),
     })
     .authorization((allow) => [
         // allow.resource(fn) is only available at schema level in the installed
@@ -139,9 +164,15 @@ const schema = a
         // (ModelType/ModelField's authorization() callbacks omit `resource` from
         // the allow-modifier type). The IAM policy this grants post-confirmation
         // is schema-wide 'mutate', wider than "create on UserProfile only"; the
-        // handler itself only ever calls UserProfile.create. When claimHandleFn and
-        // membershipFn land, their grants join this same list.
+        // handler itself only ever calls UserProfile.create. When membershipFn
+        // lands, its grant joins this same list.
         allow.resource(postConfirmation).to(['mutate']),
+        // claim-handle reads UserProfile (to reject an already-claimed member),
+        // creates Handle, and updates UserProfile.handle. Schema-level allow.resource()
+        // operations are GraphQL-shaped ('query' | 'mutate' | 'listen'), not the
+        // per-field CRUD vocabulary used inside a model's own .to() — 'query' covers
+        // the UserProfile.get() read, same schema-wide-grant caveat as above.
+        allow.resource(claimHandle).to(['mutate', 'query']),
     ]);
 
 export type Schema = ClientSchema<typeof schema>;

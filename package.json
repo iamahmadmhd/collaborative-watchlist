@@ -9,8 +9,8 @@
         "build:analyze": "vite build --mode analyze",
         "preview": "vite preview",
         "lint": "eslint",
-        "format": "prettier --write . && eslint --fix",
         "check": "prettier --check .",
+        "format": "prettier --write . && eslint --fix",
         "test": "vitest",
         "test:e2e": "playwright test",
         "sandbox": "ampx sandbox"
@@ -46,6 +46,7 @@
         "@testing-library/jest-dom": "^7.0.1",
         "@testing-library/react": "^16.3.2",
         "@testing-library/user-event": "^14.6.4",
+        "@types/aws-lambda": "^8.10.162",
         "@types/node": "^22.10.2",
         "@types/react": "^19.2.0",
         "@types/react-dom": "^19.2.0",

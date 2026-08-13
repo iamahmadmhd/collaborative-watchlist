@@ -138,6 +138,8 @@ export default tseslint.config(
         },
     },
     {
-        ignores: ['dist/**', 'amplify/.amplify/**', '**/*.gen.ts'],
+        // .amplify/ is where `ampx sandbox` actually writes generated env types (repo
+        // root, not nested under amplify/ — verified against a real sandbox run).
+        ignores: ['dist/**', '.amplify/**', '**/*.gen.ts'],
     },
 );

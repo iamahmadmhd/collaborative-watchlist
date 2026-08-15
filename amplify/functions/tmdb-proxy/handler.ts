@@ -1,29 +1,76 @@
+import type { AppSyncResolverHandler } from 'aws-lambda';
+import { env } from '$amplify/env/tmdb-proxy';
+import type { Schema } from '../../data/resource';
+import { createTmdbClient } from './tmdb-client';
+import { CACHE_TTL_SECONDS, cacheKeys, createCacheStore } from './cache';
+
 // tmdb-proxy — System Design §4.2, §6, ADR-007
 //
-// Handles all four TMDB queries (discoverMovies, searchMovies, getMovieDetails,
-// getGenres) in ONE function, routing on the GraphQL field name — not four
-// separate functions. Rationale: four cold-start surfaces on the discovery
-// path would work against NFR-PERF-1's 4s cold budget; one warm function
-// serving all discovery traffic is the point.
-//
-// v1.1: this function requires an authenticated caller (ADR-009). Every invocation
-// carries a user-pool identity — useful for the per-principal rate limiting that
-// NFR-SEC-3 now specifies.
-//
-// Responsibilities, in order:
-//   1. Resolve the field name being invoked (event.info.fieldName / event.arguments).
-//   2. Build a normalised cache key (lowercase + trim search terms, sort filter
-//      params — System Design §5.5) and check the TmdbCache DynamoDB table.
-//   3. On a cache hit where `expiresAt` (epoch seconds) has NOT passed: return
-//      the cached payload. DynamoDB TTL deletion can lag up to 48h — do NOT
-//      treat row *existence* as a hit; compare expiresAt explicitly.
-//   4. On a miss: fetch the TMDB credential via the Amplify `secret()` helper
-//      (SSM Parameter Store — FR-TMDB-1, NFR-SEC-5), call TMDB over HTTPS,
-//      validate/parse the response through Zod (FR-TMDB-3 — TMDB's field
-//      naming must never reach the client), write the cache entry with the
-//      appropriate TTL (table in §5.5: genres 7d, trending 1h, discover 1h,
-//      movie 24h, search 15m), and return the normalised payload.
-//   5. Image paths (FR-TMDB-4): return relative paths as given by TMDB. Do NOT
-//      construct full image URLs server-side — the client picks w185 vs w500.
-//
-// TODO: implement. See resource.ts (create it) for the Lambda + secret() wiring.
+// One function for all four TMDB queries (discoverMovies, searchMovies,
+// getMovieDetails, getGenres), routed on the GraphQL field name. Separate
+// functions per query would mean four cold-start surfaces on the discovery path;
+// one warm function serving all discovery traffic serves NFR-PERF-1's 4s cold
+// budget better. Every invocation carries a user-pool identity (ADR-009) — not
+// used for per-request logic here, but it's what makes NFR-SEC-3's per-principal
+// WAF throttle (System Design §6, applied at the AppSync API, not in this
+// function) possible in the first place.
+
+const tmdb = createTmdbClient(env.TMDB_ACCESS_TOKEN);
+// TMDB_CACHE_TABLE_NAME is injected via CDK addEnvironment in backend.ts once the
+// plain-CDK TmdbCache table exists (§5.5) — it isn't declared in this function's
+// defineFunction environment, so it isn't in the typed `env` import above.
+const cache = createCacheStore(process.env.TMDB_CACHE_TABLE_NAME!);
+
+async function withCache<T>(cacheKey: string, ttlSeconds: number, fetchFresh: () => Promise<T>): Promise<T> {
+    const cached = await cache.get<T>(cacheKey);
+    if (cached) {
+        return cached;
+    }
+    const fresh = await fetchFresh();
+    await cache.put(cacheKey, fresh, ttlSeconds);
+    return fresh;
+}
+
+function toPositivePage(page: number | null | undefined): number {
+    return page && page > 0 ? Math.floor(page) : 1;
+}
+
+export const handler: AppSyncResolverHandler<Record<string, unknown>, unknown> = async (event) => {
+    switch (event.info.fieldName) {
+        case 'getGenres':
+            return withCache(cacheKeys.genres(), CACHE_TTL_SECONDS.genres, () => tmdb.fetchGenres());
+
+        case 'discoverMovies': {
+            const args = event.arguments as Schema['discoverMovies']['args'];
+            const page = toPositivePage(args.page);
+            const genreIds = (args.genreIds ?? []).filter((id): id is number => id != null);
+
+            if (genreIds.length === 0) {
+                // FR-DISC-1: no filter — trending/popular.
+                return withCache(cacheKeys.trending(page), CACHE_TTL_SECONDS.trending, () => tmdb.fetchTrending(page));
+            }
+            // FR-DISC-3: filtered by one or more genres.
+            return withCache(cacheKeys.discover(genreIds, page), CACHE_TTL_SECONDS.discover, () =>
+                tmdb.fetchDiscover(genreIds, page),
+            );
+        }
+
+        case 'searchMovies': {
+            const args = event.arguments as Schema['searchMovies']['args'];
+            const page = toPositivePage(args.page);
+            return withCache(cacheKeys.search(args.query, page), CACHE_TTL_SECONDS.search, () =>
+                tmdb.fetchSearch(args.query, page),
+            );
+        }
+
+        case 'getMovieDetails': {
+            const args = event.arguments as Schema['getMovieDetails']['args'];
+            return withCache(cacheKeys.movie(args.tmdbId), CACHE_TTL_SECONDS.movie, () =>
+                tmdb.fetchMovieDetail(args.tmdbId),
+            );
+        }
+
+        default:
+            throw new Error(`tmdb-proxy: unhandled field "${event.info.fieldName}"`);
+    }
+};

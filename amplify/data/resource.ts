@@ -1,6 +1,7 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
 import { postConfirmation } from '../functions/post-confirmation/resource';
 import { claimHandle } from '../functions/claim-handle/resource';
+import { tmdbProxy } from '../functions/tmdb-proxy/resource';
 
 // Models below follow System Design §5.1 (Data Design) exactly. Before changing a
 // key structure or auth rule, re-read §4.4 (Authorization Model) and ADR-001 — the
@@ -135,12 +136,69 @@ const schema = a
                 allow.owner(), // V-3: a Viewer's watched state is invisible to the Owner
             ]),
 
-        // TMDB proxy custom queries (System Design §6). All four are Lambda-backed and
-        // authenticated-only under v1.1 — no guest access (ADR-009). Wire once tmdb-proxy exists:
-        //   discoverMovies, searchMovies, getMovieDetails, getGenres
-        // TODO: a.query(...).handler(a.handler.function(tmdbProxyFn)).authorization(allow => [allow.authenticated()])
-        //       Note: allow.authenticated() only. allow.guest() would reopen the anonymous
-        //       surface removed in ADR-009 and fail V-10.
+        // TMDB proxy custom queries (System Design §6, ADR-007). All four are
+        // Lambda-backed and authenticated-only under v1.1 — no guest access (ADR-009).
+        // allow.authenticated() only: allow.guest() would reopen the anonymous surface
+        // removed in ADR-009 and fail V-10.
+        Genre: a.customType({
+            id: a.integer().required(),
+            name: a.string().required(),
+        }),
+        MovieSummary: a.customType({
+            tmdbId: a.string().required(),
+            title: a.string().required(),
+            posterPath: a.string(), // relative path (FR-TMDB-4) — client picks w185/w500
+            releaseYear: a.integer(),
+        }),
+        CastMember: a.customType({
+            tmdbId: a.string().required(),
+            name: a.string().required(),
+            character: a.string(),
+            profilePath: a.string(),
+        }),
+        MovieDetail: a.customType({
+            tmdbId: a.string().required(),
+            title: a.string().required(),
+            overview: a.string(),
+            releaseDate: a.string(),
+            runtimeMinutes: a.integer(),
+            posterPath: a.string(),
+            genres: a.ref('Genre').array(),
+            cast: a.ref('CastMember').array(),
+        }),
+        PaginatedMovies: a.customType({
+            results: a.ref('MovieSummary').array().required(),
+            page: a.integer().required(),
+            totalPages: a.integer().required(),
+            totalResults: a.integer().required(),
+        }),
+
+        getGenres: a
+            .query()
+            .arguments({})
+            .returns(a.ref('Genre').array())
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(tmdbProxy)),
+        // FR-DISC-1 (trending/popular, no filter) and FR-DISC-3 (genre filter) are one
+        // query — see handler.ts for the trending/discover branch on genreIds presence.
+        discoverMovies: a
+            .query()
+            .arguments({ genreIds: a.integer().array(), page: a.integer() })
+            .returns(a.ref('PaginatedMovies'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(tmdbProxy)),
+        searchMovies: a
+            .query()
+            .arguments({ query: a.string().required(), page: a.integer() })
+            .returns(a.ref('PaginatedMovies'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(tmdbProxy)),
+        getMovieDetails: a
+            .query()
+            .arguments({ tmdbId: a.string().required() })
+            .returns(a.ref('MovieDetail'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(tmdbProxy)),
 
         // FR-AUTH-3/4, ADR-008, V-1. success:false + error distinguishes the three
         // rejection reasons so the client doesn't have to parse GraphQL error strings

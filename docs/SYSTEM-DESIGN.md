@@ -385,7 +385,7 @@ On-demand billing throughout. Traffic is spiky and near zero at rest, which is t
 ## 6\. TMDB Integration
 
 Four queries: discoverMovies, searchMovies, getMovieDetails, getGenres. All Lambda-backed, all requiring a user-pool identity (SRS v1.1, FR-DISC-1).  
-Credential handling (FR-TMDB-1): held in SSM Parameter Store, referenced via Amplify Gen 2's secret() helper. Never in the client bundle, never in a committed .env.  
+Credential handling (FR-TMDB-1): TMDB's bearer Read Access Token, held in SSM Parameter Store as the `TMDB_ACCESS_TOKEN` secret and referenced via Amplify Gen 2's secret() helper. Sent to TMDB in an Authorization header, never as a query parameter — keeps it out of URLs and access logs, and out of the client bundle and any committed .env.  
 Normalisation (FR-TMDB-3): responses are parsed by Zod schemas and mapped to application-defined camelCase types. TMDB's field naming never reaches the GraphQL schema. Coupling the API contract to a third party's shape would make provider substitution touch every component. Zod also enforces the SRS position that TMDB is an untrusted input \- shape drift fails loudly rather than propagating undefined.  
 Image paths (FR-TMDB-4): relative paths are returned, not full URLs. The client selects the rendering size \- w185 for grid cards, w500 for detail. Server-side URL construction would ship 500px images into 120px cells.  
 Snapshots (FR-TMDB-5): title, poster path, and release year are denormalised onto WatchlistItem and SavedMovie. Cost: occasional staleness against TMDB. Benefit: a 50-item list renders from one query rather than 50 external calls (FR-ITEM-6). A background refresh job is a viable later addition.  

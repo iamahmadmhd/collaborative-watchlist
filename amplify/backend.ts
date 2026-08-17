@@ -4,7 +4,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
-import { CfnResource, Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { CfnResource, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { auth } from './auth/resource';
 import { data } from './data/resource';
 import { postConfirmation } from './functions/post-confirmation/resource';
@@ -99,7 +99,16 @@ function streamArnOf(tableWrapper: typeof watchlistTableWrapper): string {
 const watchlistStreamArn = streamArnOf(watchlistTableWrapper);
 const watchlistItemStreamArn = streamArnOf(watchlistItemTableWrapper);
 
-const permissionFanoutStack = backend.createStack('PermissionFanoutStack');
+const permissionFanoutLambda = backend.permissionFanout.resources.lambda;
+// The DLQ and EventSourceMappings below must live in the SAME stack as the function
+// itself, not a new sibling stack (backend.createStack(...) was tried first and
+// produced CloudformationStackCircularDependencyError). A separate stack creates a
+// two-way nested-stack dependency: EventSourceMapping.target needs the function's ARN
+// (new-stack -> function-stack), while its DLQ wiring grants the function's role
+// permission to send to the queue (function-stack -> new-stack) — CloudFormation can't
+// order two nested stacks that depend on each other. Reusing the function's own
+// auto-generated nested stack removes that second edge entirely.
+const permissionFanoutStack = Stack.of(permissionFanoutLambda);
 // §4.5: "Dead-letter queue required. Silent failure means stale permissions with
 // nothing surfacing." One shared queue for both stream sources — same function,
 // same consistency story (§4.5's own rationale for merging fan-out and itemCount
@@ -107,8 +116,6 @@ const permissionFanoutStack = backend.createStack('PermissionFanoutStack');
 const permissionFanoutDlq = new sqs.Queue(permissionFanoutStack, 'PermissionFanoutDlq', {
     retentionPeriod: Duration.days(14),
 });
-
-const permissionFanoutLambda = backend.permissionFanout.resources.lambda;
 
 const eventSourceMappingDefaults = {
     target: permissionFanoutLambda,

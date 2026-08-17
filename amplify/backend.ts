@@ -4,7 +4,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
-import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { CfnResource, Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { auth } from './auth/resource';
 import { data } from './data/resource';
 import { postConfirmation } from './functions/post-confirmation/resource';
@@ -70,13 +70,34 @@ handleTable.grant(membershipLambda, 'dynamodb:GetItem');
 
 // System Design §4.5, §5.4. permission-fanout consumes DynamoDB Streams on both
 // Watchlist and WatchlistItem. Amplify Gen 2 does not expose stream configuration
-// declaratively, so streams are enabled via the CDK escape hatch on each table's L1
-// CfnTable — mutating .streamSpecification here changes the synthesized template
-// even though the object was created by Amplify's construct, not directly by us.
-const watchlistCfnTable = backend.data.resources.cfnResources.cfnTables.Watchlist;
-const watchlistItemCfnTable = backend.data.resources.cfnResources.cfnTables.WatchlistItem;
-watchlistCfnTable.streamSpecification = { streamViewType: 'NEW_AND_OLD_IMAGES' };
-watchlistItemCfnTable.streamSpecification = { streamViewType: 'NEW_AND_OLD_IMAGES' };
+// declaratively, so streams are enabled via the CDK escape hatch — but Amplify Data's
+// default per-model tables are NOT plain CfnTable L1s, they're a Custom::AmplifyDynamoDBTable
+// custom resource. cfnResources.cfnTables (keyed by logicalId) is for the plain-table
+// data source strategy and is empty here; the escape hatch for the default strategy is
+// cfnResources.amplifyDynamoDbTables (keyed by model name), which wraps that custom
+// resource in AmplifyDynamoDbTableWrapper — see advanced-features reference in the
+// amplify-workflow skill. Using cfnTables.Watchlist here previously resolved to
+// undefined, so `.streamSpecification = ...` threw "Cannot set properties of undefined".
+const watchlistTableWrapper = backend.data.resources.cfnResources.amplifyDynamoDbTables.Watchlist;
+const watchlistItemTableWrapper = backend.data.resources.cfnResources.amplifyDynamoDbTables.WatchlistItem;
+watchlistTableWrapper.streamSpecification = { streamViewType: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES };
+watchlistItemTableWrapper.streamSpecification = { streamViewType: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES };
+
+// AmplifyDynamoDbTableWrapper only exposes property *setters* for the underlying custom
+// resource (it mimics Table's override ergonomics, not its read surface) — there's no
+// public getter for the stream ARN the custom resource emits once streams are enabled.
+// `resource` is a TS-private constructor property, not a runtime-private field, so this
+// reads the exact same CfnResource the setters above mutate. It's the same
+// GetAtt('TableStreamArn') call Amplify's own AmplifyDynamoDBTable construct makes
+// internally when `stream` is set at construction time (see
+// @aws-amplify/graphql-model-transformer's amplify-dynamodb-table-construct) — the
+// table's tableStreamArn field is fixed at synth time before this override runs, so it
+// stays undefined and can't be reused; this GetAtt is the only way to reach the token.
+function streamArnOf(tableWrapper: typeof watchlistTableWrapper): string {
+    return (tableWrapper as unknown as { resource: CfnResource }).resource.getAtt('TableStreamArn').toString();
+}
+const watchlistStreamArn = streamArnOf(watchlistTableWrapper);
+const watchlistItemStreamArn = streamArnOf(watchlistItemTableWrapper);
 
 const permissionFanoutStack = backend.createStack('PermissionFanoutStack');
 // §4.5: "Dead-letter queue required. Silent failure means stale permissions with
@@ -105,11 +126,11 @@ const eventSourceMappingDefaults = {
 
 new lambda.EventSourceMapping(permissionFanoutStack, 'WatchlistStreamMapping', {
     ...eventSourceMappingDefaults,
-    eventSourceArn: watchlistCfnTable.attrStreamArn,
+    eventSourceArn: watchlistStreamArn,
 });
 new lambda.EventSourceMapping(permissionFanoutStack, 'WatchlistItemStreamMapping', {
     ...eventSourceMappingDefaults,
-    eventSourceArn: watchlistItemCfnTable.attrStreamArn,
+    eventSourceArn: watchlistItemStreamArn,
 });
 
 // Stream-read permissions aren't covered by Table.grant()/grantReadWriteData() (those
@@ -121,7 +142,7 @@ new lambda.EventSourceMapping(permissionFanoutStack, 'WatchlistItemStreamMapping
 permissionFanoutLambda.addToRolePolicy(
     new iam.PolicyStatement({
         actions: ['dynamodb:DescribeStream', 'dynamodb:GetRecords', 'dynamodb:GetShardIterator'],
-        resources: [watchlistCfnTable.attrStreamArn, watchlistItemCfnTable.attrStreamArn],
+        resources: [watchlistStreamArn, watchlistItemStreamArn],
     }),
 );
 permissionFanoutLambda.addToRolePolicy(

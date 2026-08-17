@@ -14,6 +14,9 @@ importers:
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.1109.0
         version: 3.1109.0(@aws-sdk/client-dynamodb@3.1109.0)
+      '@aws-sdk/util-dynamodb':
+        specifier: ^3.996.8
+        version: 3.996.8(@aws-sdk/client-dynamodb@3.1109.0)
       '@base-ui/react':
         specifier: ^1.7.0
         version: 1.7.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)

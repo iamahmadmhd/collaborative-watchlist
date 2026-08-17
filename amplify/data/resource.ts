@@ -2,14 +2,17 @@ import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
 import { postConfirmation } from '../functions/post-confirmation/resource';
 import { claimHandle } from '../functions/claim-handle/resource';
 import { tmdbProxy } from '../functions/tmdb-proxy/resource';
+import { membership } from '../functions/membership/resource';
 
 // Models below follow System Design §5.1 (Data Design) exactly. Before changing a
 // key structure or auth rule, re-read §4.4 (Authorization Model) and ADR-001 — the
 // composite keys and denormalised permission arrays are load-bearing, not incidental.
 //
-// STATUS: structural skeleton only. Field-level auth rules for the permission fields
-// (§4.4 table) and the membershipFn custom-write path are NOT yet implemented — see
-// TODOs inline. Do not ship this schema as-is; FR-MEM-9 depends on those rules existing.
+// STATUS: FR-MEM-9's field-level auth (Watchlist's ownerId/editors/viewers), the
+// membership function (addMember/removeMember/leaveWatchlist), and permission-fanout
+// (§4.5 propagation to WatchlistItem + §5.4 itemCount maintenance, both stream-driven
+// from amplify/backend.ts — not visible in this file) are all implemented. All five
+// functions named in System Design §4.1 now exist.
 
 const schema = a
     .schema({
@@ -55,21 +58,55 @@ const schema = a
             .model({
                 name: a.string().required(),
                 description: a.string(),
-                ownerId: a.string().required(),
-                editors: a.string().array(),
-                viewers: a.string().array(),
+                // Field-level authorization below REPLACES the model-level rules for these
+                // three fields only (Amplify Gen2 Data semantics — a field's own .authorization()
+                // is exclusive, not additive, for that field; every other field keeps inheriting
+                // the model-level rules at the bottom of this model). System Design §4.4's table
+                // says these three are "allow.resource(membershipFn) only" — but membershipFn
+                // (amplify/functions/membership) never calls back through AppSync at all: FR-MEM-8
+                // requires an atomic write across Watchlist AND WatchlistMember, and AppSync/
+                // Amplify Data has no transactional multi-model mutation, so membership talks to
+                // DynamoDB directly via TransactWriteItems (IAM grant in backend.ts), bypassing
+                // the GraphQL API entirely. allow.resource() grants a Lambda access *through*
+                // AppSync — irrelevant to a function that never goes through it. The correct
+                // closure of FR-MEM-9 / NFR-SEC-2 on the GraphQL surface is therefore stronger
+                // than allow.resource() would have been: no caller — Owner included — gets
+                // `update` on these fields via the API at all, so post-creation they are
+                // structurally unreachable from any GraphQL request, full stop. `create` stays
+                // granted to the Owner only, so the initial values can be set when a watchlist
+                // is made.
+                ownerId: a
+                    .string()
+                    .required()
+                    .authorization((allow) => [
+                        allow.owner().to(['read', 'create']),
+                        allow.ownersDefinedIn('editors').to(['read']),
+                        allow.ownersDefinedIn('viewers').to(['read']),
+                    ]),
+                editors: a
+                    .string()
+                    .array()
+                    .authorization((allow) => [
+                        allow.owner().to(['read', 'create']),
+                        allow.ownersDefinedIn('editors').to(['read']),
+                        allow.ownersDefinedIn('viewers').to(['read']),
+                    ]),
+                viewers: a
+                    .string()
+                    .array()
+                    .authorization((allow) => [
+                        allow.owner().to(['read', 'create']),
+                        allow.ownersDefinedIn('editors').to(['read']),
+                        allow.ownersDefinedIn('viewers').to(['read']),
+                    ]),
                 itemCount: a.integer().default(0), // maintained by permission-fanout stream consumer, §5.4
             })
             .authorization((allow) => [
-                allow.ownersDefinedIn('editors').to(['read', 'update']), // name/description only — see TODO below
+                // Model-level default, applying to every field WITHOUT its own rule above —
+                // i.e. name/description only, per §4.4's table.
+                allow.ownersDefinedIn('editors').to(['read', 'update']),
                 allow.ownersDefinedIn('viewers').to(['read']),
-                allow.owner(), // full CRUD for the Owner
-                // TODO (NFR-SEC-2 / FR-MEM-9 — do not skip): field-level write rules restricting
-                // ownerId/editors/viewers to allow.resource(membershipFn) only. As written above,
-                // allow.ownersDefinedIn('editors') grants editors update rights on the WHOLE
-                // record, including editors/viewers themselves — that is a privilege escalation
-                // hole. System Design §4.4 has the exact field/permission table to implement
-                // via a custom mutation + field-level auth, not the generated update resolver.
+                allow.owner(), // full CRUD on name/description; ownerId/editors/viewers narrowed above
             ]),
 
         WatchlistMember: a
@@ -83,8 +120,13 @@ const schema = a
             .secondaryIndexes((index) => [index('userId').name('byUser')])
             .authorization((allow) => [
                 allow.authenticated().to(['read']),
-                // Writes go through the membership function (TransactWriteItems, §4.2) — not
-                // the generated resolver. Restrict create/update/delete to allow.resource(membershipFn).
+                // No create/update/delete grant exists here for anyone — this model already has
+                // zero user-facing write path via GraphQL. Writes come exclusively from the
+                // membership function (amplify/functions/membership), which writes this table
+                // directly via DynamoDB TransactWriteItems under an IAM grant (backend.ts), not
+                // through AppSync — see the Watchlist model's comment above for why
+                // allow.resource() isn't the mechanism here (no transactional multi-model
+                // mutation exists to grant access to in the first place).
             ]),
 
         WatchlistItem: a
@@ -215,6 +257,62 @@ const schema = a
             .returns(a.ref('ClaimHandleResult'))
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(claimHandle)),
+
+        // membership (System Design §4.2, §4.4, §4.5, FR-MEM-1..9). All three mutations are
+        // handled by the same Lambda, which writes Watchlist + WatchlistMember atomically via
+        // DynamoDB TransactWriteItems — see membership/handler.ts for why. allow.authenticated()
+        // here is a coarse gate only; the actual owner/self checks happen inside the handler
+        // against data it reads itself, matching claimHandle's pattern (NFR-SEC-1 — server-side
+        // enforcement, not the mutation-level auth rule).
+        AddMemberResult: a.customType({
+            success: a.boolean().required(),
+            error: a.enum([
+                'NOT_FOUND',
+                'NOT_OWNER',
+                'INVALID_ROLE',
+                'HANDLE_NOT_FOUND',
+                'ALREADY_MEMBER',
+                'MEMBER_CAP_REACHED',
+                'CONFLICT',
+            ]),
+        }),
+        // Shared by removeMember and leaveWatchlist — both a single membership record's
+        // removal, differing only in who may call them and whether NOT_OWNER can occur.
+        MembershipResult: a.customType({
+            success: a.boolean().required(),
+            error: a.enum(['NOT_FOUND', 'NOT_OWNER', 'NOT_A_MEMBER', 'CANNOT_REMOVE_OWNER', 'CONFLICT']),
+        }),
+
+        // FR-MEM-1/3: Owner adds a collaborator by handle, assigning Editor or Viewer.
+        addMember: a
+            .mutation()
+            .arguments({
+                watchlistId: a.string().required(),
+                handle: a.string().required(),
+                // Not .required() — a.enum() doesn't support the modifier (matches the
+                // ClaimHandleResult.error / WatchlistMember.role style elsewhere in this file).
+                // Handler validates presence at runtime instead.
+                role: a.enum(['EDITOR', 'VIEWER']),
+            })
+            .returns(a.ref('AddMemberResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(membership)),
+
+        // FR-MEM-4: Owner removes any collaborator (never the Owner themselves — FR-MEM-6).
+        removeMember: a
+            .mutation()
+            .arguments({ watchlistId: a.string().required(), userId: a.string().required() })
+            .returns(a.ref('MembershipResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(membership)),
+
+        // FR-MEM-5: any collaborator removes themselves (the Owner cannot — FR-MEM-6).
+        leaveWatchlist: a
+            .mutation()
+            .arguments({ watchlistId: a.string().required() })
+            .returns(a.ref('MembershipResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(membership)),
     })
     .authorization((allow) => [
         // allow.resource(fn) is only available at schema level in the installed

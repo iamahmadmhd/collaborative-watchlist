@@ -2,7 +2,31 @@
 
 ## Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.1 Date: 11 August 2026 Status: Approved
+Version: 1.3 Date: 17 August 2026 Status: Approved
+
+Revision note (v1.3): There is no separate sign-in screen. A passwordless flow makes
+"sign in" and "register" the same action from the visitor's side — enter an email,
+receive a code — with only the handle distinguishing a new member from a returning
+one, and that distinction is discovered from Cognito's response (does an account
+exist for this email), not from the visitor picking the correct screen up front.
+Matches the design board's own overview, which lists only "/signup and /verify" for
+the entire auth flow. Affected: §2.2 (Visitor access), FR-AUTH-1 (wording only, no
+behaviour change beyond dropping "sign in" as a distinct screen).
+
+Revision note (v1.2): Authentication is now passwordless. Registration collects an
+email address and a handle together; a one-time code emailed to that address both
+verifies the address and authenticates the member — no password is ever collected,
+stored, or offered as a sign-in method, and there is consequently no password-reset
+flow. The handle is claimed atomically at registration (once verification succeeds),
+not during a separate first-run onboarding step; a member who loses that race may
+still claim a handle afterward from Settings, as the one exception to handles being
+otherwise unchangeable this release. Driven by the screen-level visual design board (System Design §10 /
+`docs/design/`), which specified this flow — the previous password-based
+implementation (auth Lambda triggers, Cognito config, and the five auth forms) is
+replaced by this revision, not merely re-skinned.
+Affected: §2.2, FR-AUTH-1, FR-AUTH-3, FR-AUTH-6. See System Design v1.2 §4.2/§4.3 for
+the Cognito mechanism (email OTP, `custom:handle` at sign-up, `post-confirmation`
+claiming) and §8 ADR-010 for the alternatives considered.
 
 Revision note (v1.1): Unauthenticated discovery has been removed. All film discovery,
 search, and detail views now require an authenticated member. The Guest user class is
@@ -60,7 +84,7 @@ Consequence of v1.1: with unauthenticated discovery removed, a reviewer sees not
 
 | Class   | Description                          | Access                                                              |
 | :------ | :----------------------------------- | :------------------------------------------------------------------ |
-| Visitor | Unauthenticated                      | Authentication screens only — sign up, sign in, verify, reset       |
+| Visitor | Unauthenticated                      | Authentication screens only — continue (sign up or sign in), verify |
 | Member  | Registered, verified user            | Discovery, search, and all personal features; may create watchlists |
 | Owner   | Member who created a given watchlist | Full control of that list, including membership                     |
 | Editor  | Collaborator with write access       | May add, remove, and reorder items; may not alter membership        |
@@ -92,15 +116,15 @@ These are fixed inputs to the design phase, not outcomes of it:
 
 ### 3.1 Authentication and Identity
 
-| ID        | Requirement                                                                                                                               | Priority |
-| :-------- | :---------------------------------------------------------------------------------------------------------------------------------------- | :------- |
-| FR-AUTH-1 | The system shall allow registration with an email address and password.                                                                   | Must     |
-| FR-AUTH-2 | The system shall require email verification before granting member privileges.                                                            | Must     |
-| FR-AUTH-3 | The system shall require each member to claim a unique handle during first-run onboarding.                                                | Must     |
-| FR-AUTH-4 | The system shall reject a handle already claimed by another member, atomically, with no window in which two members hold the same handle. | Must     |
-| FR-AUTH-5 | The system shall allow members to set a display name and avatar.                                                                          | Should   |
-| FR-AUTH-6 | The system shall allow members to sign out, and shall allow password reset via email.                                                     | Must     |
-| FR-AUTH-7 | The system shall never expose any member's email address to any other member through any interface.                                       | Must     |
+| ID        | Requirement                                                                                                                                                                                                               | Priority |
+| :-------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------- |
+| FR-AUTH-1 | The system shall allow registration with an email address and a chosen handle in one step, authenticated by a one-time code sent to that address. No password shall be collected, stored, or offered as a sign-in method. | Must     |
+| FR-AUTH-2 | The system shall require email verification before granting member privileges.                                                                                                                                            | Must     |
+| FR-AUTH-3 | The system shall require each member to have a unique handle, claimed atomically at registration once verification succeeds, or — if that claim did not succeed — from Settings afterward.                                | Must     |
+| FR-AUTH-4 | The system shall reject a handle already claimed by another member, atomically, with no window in which two members hold the same handle.                                                                                 | Must     |
+| FR-AUTH-5 | The system shall allow members to set a display name and avatar.                                                                                                                                                          | Should   |
+| FR-AUTH-6 | The system shall allow members to sign out. Re-authentication issues a fresh one-time code; there is no persistent credential to reset.                                                                                   | Must     |
+| FR-AUTH-7 | The system shall never expose any member's email address to any other member through any interface.                                                                                                                       | Must     |
 
 ### 3.2 Discovery
 

@@ -2,7 +2,11 @@
 
 ## Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.1 Date: 11 August 2026 Companion to: SRS v1.1
+Version: 1.3 Date: 17 August 2026 Companion to: SRS v1.3
+
+Revision note (v1.3): No separate sign-in screen. `/sign-up` now handles both entry points — it attempts `signIn()` with the EMAIL_OTP challenge first (a lightweight existence check), and falls back to `signUp()` only on `UserNotFoundException`, at which point a handle is required (not before, since a returning member has no reason to supply one). Matches the design board's own overview, which enumerates only "/signup and /verify" for the whole flow. Six forms now, not seven. Affected: §2.5, §4.2.
+
+Revision note (v1.2): Authentication is passwordless per SRS v1.2 — email OTP via Cognito's native `otpLogin`, no password anywhere. `claim-handle` moves from a first-run-onboarding mutation to a `post-confirmation`-driven atomic claim at registration, with `claim-handle` retained as the narrow recovery path for a lost handle-claim race (called from Settings, not sign-up). The five password-based auth forms (sign up, sign in, verify, request reset, confirm reset) are replaced by three (sign up, sign in, verify — the last shared by both entry points). Affected: §2.5, §3.2 (token names reconciled against the screen-design board), §4.2, §4.3, §9, and ADR-010 (new).
 
 Revision note (v1.1): Unauthenticated discovery removed per SRS v1.1. The guest identity pool mode is withdrawn, and the code-splitting boundary inverts — the eager chunk is now the authentication shell rather than the discovery shell. Affected: §2.6, §4.3, §6, §9, and ADR-009 (new). ADR-003 and ADR-005 are unchanged in decision but strengthened in rationale, since the auth forms they concern now sit on the eager path.
 
@@ -117,10 +121,10 @@ On subscription interruption the client refetches rather than assuming continuit
 
 ### 2.5 Forms
 
-Nine forms: sign up, sign in, verify email, request reset, confirm reset, claim handle, create/edit list, add member, profile settings.  
+Six forms (revised in v1.3 — down from nine): sign up (the sole auth entry point — email, and a handle if the account turns out to be new; attempts sign-in first, FR-AUTH-1/3, §4.2), verify code (shared by both outcomes of that attempt), claim handle (the Settings-only recovery path, §4.2), create/edit list, add member, profile settings. request reset and confirm reset are gone — there is no password to reset (SRS v1.2); sign in is gone as a separate form — v1.3 folded it into sign up, since a passwordless flow has no second credential to distinguish "sign in" from "register" until the server says whether the account exists.  
 Validation ownership is exclusive. react-hook-form with Zod owns validation and form state. Base UI's Field provides label, description, and error ARIA wiring only. Base UI's own validate and Form error props are not used. Two validation systems on one input produce errors that clear at different times.  
 Native inputs use a register. Base UI's Select, Combobox, and OTPField require Controller; this wiring lives inside the shared/ui wrapper for each, so it is written once per component type rather than once per form.  
-Handle availability checking is UX only. Async validation gives immediate feedback, but FR-AUTH-4's atomicity comes from the server-side conditional write. Two members can pass the async check simultaneously; the submit path must handle server rejection gracefully.
+Handle availability checking is UX only. Async validation gives immediate feedback, but FR-AUTH-4's atomicity comes from the server-side conditional write — now performed inside `post-confirmation` at registration, or inside `claim-handle` for the Settings recovery path (§4.2). Two members can pass the async check simultaneously; the submit path must handle server rejection gracefully.
 
 ### 2.6 Code Splitting
 
@@ -162,15 +166,22 @@ The reference world is the repertory cinema programme and the film archive: inde
 
 Tokens are named by role, not appearance. Paper and ink become meaningless when inverted; surface and text do not.
 
-| Role            | Light    | Dark     |
-| :-------------- | :------- | :------- |
-| surface         | \#EAECEF | \#131519 |
-| surface-raised  | \#FDFDFD | \#1C1F26 |
-| text            | \#191C22 | \#E6E8EC |
-| text-muted      | \#5A6270 | \#9AA3B2 |
-| border          | \#C5CAD2 | \#2E333D |
-| accent          | \#1B3BD0 | \#6B8BFF |
-| accent-contrast | \#FFFFFF | \#0E1117 |
+**Naming reconciled against the screen-design board in v1.2** (`docs/design/`, `Repertory UI Board.dc.html`) — the underlying colour values were already identical; only the CSS custom-property names below changed, to match what the board's own markup actually references. `text-muted` and `surface-raised` are the old v1.0/v1.1 names; the board (and the implementation from v1.2 on) uses `muted` and `raised`.
+
+| Role            | Custom property     | Light                | Dark                 |
+| :-------------- | :------------------ | :------------------- | :------------------- |
+| surface         | `--surface`         | \#EAECEF             | \#131519             |
+| surface-raised  | `--raised`          | \#FDFDFD             | \#1C1F26             |
+| text            | `--text`            | \#191C22             | \#E6E8EC             |
+| text-muted      | `--muted`           | \#5A6270             | \#9AA3B2             |
+| border          | `--border`          | \#C5CAD2             | \#2E333D             |
+| accent          | `--accent`          | \#1B3BD0             | \#6B8BFF             |
+| accent-contrast | `--accent-contrast` | \#FFFFFF             | \#0E1117             |
+| success         | `--ok`              | oklch(0.52 0.13 152) | oklch(0.78 0.13 152) |
+| danger          | `--danger`          | oklch(0.52 0.19 25)  | oklch(0.72 0.16 25)  |
+
+`--ok`/`--danger` are new in v1.2 — undocumented before this revision, but already present in the board (handle-availability state, verification-error callout) and now formalised here. Not used before the auth screens; extend to other status UI (e.g. save confirmation) as it's built, rather than inventing a second success/error convention.  
+The board's `--m1`..`--m5` (member-attribution colours) are a **fixed 5-colour palette**, which conflicts with §3.4's hash-generated-per-user OKLCH formula (effectively unlimited colours). Not reconciled in this revision — out of scope for the auth-only pass that produced it. Flagging here per this document's own rule (§0 design-reference note in CLAUDE.md): do not silently resolve in either direction when next touching the attribution stripe.
 
 The accent shifts between themes because cobalt at \#1B3BD0 falls near 3:1 on a dark ground \- failing AA and reading as dead navy.  
 Implementation uses custom properties swapped by class, surfaced through @theme inline:
@@ -255,10 +266,10 @@ amplify/
   auth/resource.ts              defineAuth \+ post-confirmation trigger
   data/resource.ts              schema, auth rules, custom operations
   functions/
-    post-confirmation/          create UserProfile on signup
+    post-confirmation/          create UserProfile + claim custom:handle atomically (v1.2)
     tmdb-proxy/                 all four TMDB queries
     membership/                 add / remove / leave
-    claim-handle/               conditional write for uniqueness
+    claim-handle/               Settings-only recovery claim (v1.2 — no longer the primary path)
     permission-fanout/          DynamoDB stream consumer
 ```
 
@@ -268,8 +279,8 @@ Five functions, and the restraint is deliberate. Item CRUD, list CRUD, saves, an
 
 tmdb-proxy \- handles all four TMDB queries in one function, routing on the GraphQL field name. Separate functions per query would create four cold-start surfaces on the discovery path; one warm function serving all discovery traffic better serves NFR-PERF-1. Requires an authenticated caller as of v1.1 (ADR-009); the user-pool identity on each invocation is what NFR-SEC-3's per-principal throttle keys on. Holds the TMDB credential via secret(), checks the cache table, parses responses through Zod before returning.  
 membership \- the transactional one. Adding a collaborator writes a WatchlistMember record and pushes the user into the parent's editors or viewers array: two tables, and FR-MEM-8 forbids an observable partial result. TransactWriteItems provides atomicity. Generated resolvers write one item each and cannot satisfy this. Remove and leave are the same transaction inverted, with different role checks.  
-claim-handle \- conditional write against the Handle table keyed on the handle string, conditioned on attribute\_not\_exists. The mechanism behind FR-AUTH-4 and V-1.  
-post-confirmation \- Cognito triggers creating the UserProfile record at signup. Required because Cognito cannot be queried from the client, so display names would otherwise be unavailable (FR-MEM-10).  
+claim-handle \- conditional write against the Handle table keyed on the handle string, conditioned on attribute\_not\_exists. The mechanism behind FR-AUTH-4 and V-1. Revised in v1.2: no longer called during sign-up (post-confirmation claims the handle directly, below) — retained solely as the Settings-screen recovery path for a member whose sign-up-time claim lost the race (FR-AUTH-3's documented exception). Its own logic is unchanged; only its caller and the product surface that reaches it changed.  
+post-confirmation \- Cognito trigger firing once email-code verification succeeds. Creates the UserProfile record (required because Cognito cannot be queried from the client, so display names would otherwise be unavailable, FR-MEM-10) and, new in v1.2, atomically claims the handle submitted at sign-up via the \`custom:handle\` attribute — the same conditional Handle-table write claim-handle performs, run here because no authenticated session exists yet at signUp() time for the client to call claim-handle itself. A conditional-check failure (handle taken between the client's live-availability check and this trigger) does not fail the sign-up: verification already succeeded, so UserProfile is created without a handle, and the member claims one later via claim-handle from Settings.  
 permission-fanout \- DynamoDB stream consumer; see §4.5.
 
 ### 4.3 Authentication and Authorization Modes
@@ -516,6 +527,28 @@ Consequences:
 - Route guards move from decorative to load-bearing. In v1.0 an unauthenticated visitor landing on /discover was served content; in v1.1 they are redirected to sign in and returned afterwards (FR-DISC-6, rewritten).
 - Nothing is visible before registration. Mitigated by a seeded demonstration account, not by re-opening the anonymous surface (SRS §2.1).
 
+### ADR-010 \- Passwordless (email OTP) authentication over email/password
+
+Status: Accepted (v1.2, supersedes the password-based auth built for v1.0/v1.1)  
+Context: The screen-level visual design board (\`docs/design/\`, System Design §10) specified an email-plus-handle sign-up verified by a one-time emailed code, with no password anywhere and no reset flow — discovered only after the password-based auth backend (Cognito password login, \`claim-handle\` as a first-run-onboarding mutation) and all five password-based forms were already built against SRS v1.1's FR-AUTH-1/6. The board conflicted with the written spec rather than merely restyling it; per this document's own rule (§10, design-reference note), that conflict is resolved here explicitly, not silently.  
+Decision: Adopt the board's flow. Reconfigure Cognito for native email OTP (\`otpLogin\`); rewrite FR-AUTH-1/3/6 (SRS v1.2) to match.  
+Options considered:
+
+| Option                                 | Benefit                                                                 | Cost                                                                                                                                                                        |
+| :------------------------------------- | :---------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. Keep password auth, restyle only    | no backend/SRS change; less rework of already-shipped code              | the board's stated flow (no password, handle-at-signup) is simply not built; screens would look right and behave wrong                                                      |
+| B. Adopt the board's passwordless flow | matches the actual design intent; no password to leak, reset, or forget | Cognito reconfiguration, \`post-confirmation\` rework, three of five existing auth forms rewritten or deleted, SRS/System Design rewrite                                    |
+| C. Support both, let the user choose   | preserves optionality                                                   | two auth mechanisms to secure and test for a portfolio-scale app with one real path; the board shows no such choice, so this satisfies neither the board nor a simpler spec |
+
+Decision: Option B.  
+Rationale: the design board is the more specific, more recently authored artifact for this exact question (auth screen behaviour), and a portfolio piece's stated purpose — demonstrating the collaboration/authorization model — is not served by a stale password flow nobody asked for. Amplify Gen2's \`otpLogin\` config does not actually remove Cognito's password capability at the platform level (§4.3 is unaffected — still exactly one client-facing authorization mode), it only adds email-OTP alongside it; the application achieves "no password" by never surfacing or calling the password path, not by a platform-level guarantee that it is impossible. Option C was rejected as solving a problem nobody has: the board shows one flow, and offering two increases the attack surface and the test matrix for no product benefit.  
+Consequences:
+
+- \`claim-handle\` moves from primary (first-run onboarding) to recovery-only (Settings), called when \`post-confirmation\`'s atomic claim loses a race. Its own conditional-write logic (FR-AUTH-4) is unchanged.
+- \`custom:handle\` (Cognito custom attribute) carries the desired handle from the sign-up form to \`post-confirmation\`, since no authenticated session exists at \`signUp()\` time for a client-authenticated \`claim-handle\` call to be possible.
+- Two of five previously-built auth forms (request reset, confirm reset) are deleted outright; sign up and verify are substantially rewritten. Sign in as a separate form does not survive even this revision — v1.3 (§2.5) folds it into sign up, since passwordless auth has nothing to distinguish "sign in" from "register" on the client side until the server says whether the account exists.
+- FR-AUTH-3's "handles are unchangeable this release" limitation (§9 #6) gets one explicit exception: a member who has never successfully claimed one may still do so, via \`claim-handle\` from Settings. Changing an _already-claimed_ handle remains unsupported.
+
 ## 9\. Known Limitations
 
 Stated explicitly rather than discovered later:
@@ -525,7 +558,7 @@ Stated explicitly rather than discovered later:
 3. Snapshots drift from TMDB \- titles and posters may age; no refresh job in this release.
 4. Cold start on first discovery after sign-in \- discovery runs through Lambda. Node cold starts sit within NFR-PERF-1's 4-second cold budget. Provisioned concurrency would remove it but bills hourly regardless of traffic; rejected as the wrong trade for this application. Under v1.1 this lands slightly better than it did: the cold start is absorbed behind the authentication step rather than being a first-time visitor's first impression of the product.
 5. Collaborators are added without consent (FR-MEM-2). Mitigated by a 20-member cap and prominent leave affordance, not by moderation.
-6. Handle changes are not supported in this release; the sentinel table would need a release-and-claim transaction.
+6. Handle _changes_ are not supported in this release; the sentinel table would need a release-and-claim transaction. One exception (ADR-010, v1.2): a member who never successfully claimed a handle at all — because \`post-confirmation\`'s sign-up-time claim lost a race — may claim a first one afterward via \`claim-handle\` from Settings. That is claiming, not changing; it stays a one-shot, first-claim-only operation.
 7. Nothing is visible before registration (ADR-009). A reviewer or prospective user sees only a sign-in screen. Mitigated by a seeded demonstration account, not by reopening an anonymous surface.
 8. Every discovery session now costs a Cognito token exchange before the first TMDB call. Negligible in latency terms against NFR-PERF-1, but it means discovery can no longer be demonstrated with a bare curl against the endpoint.
 

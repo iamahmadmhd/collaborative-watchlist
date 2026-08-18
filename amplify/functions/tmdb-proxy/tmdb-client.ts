@@ -47,7 +47,9 @@ export function createTmdbClient(accessToken: string) {
 
         // FR-DISC-1: trending/popular, no genre filter.
         async fetchTrending(page: number): Promise<PaginatedMovies> {
-            const raw = tmdbSchemas.paginatedMovies.parse(await tmdbFetch(accessToken, '/trending/movie/week', { page }));
+            const raw = tmdbSchemas.paginatedMovies.parse(
+                await tmdbFetch(accessToken, '/trending/movie/week', { page }),
+            );
             return toPaginatedMovies(raw);
         },
 
@@ -61,7 +63,9 @@ export function createTmdbClient(accessToken: string) {
 
         // FR-DISC-2: full-text search by title.
         async fetchSearch(query: string, page: number): Promise<PaginatedMovies> {
-            const raw = tmdbSchemas.paginatedMovies.parse(await tmdbFetch(accessToken, '/search/movie', { query, page }));
+            const raw = tmdbSchemas.paginatedMovies.parse(
+                await tmdbFetch(accessToken, '/search/movie', { query, page }),
+            );
             return toPaginatedMovies(raw);
         },
 

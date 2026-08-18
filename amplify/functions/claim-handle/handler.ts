@@ -5,7 +5,17 @@ import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtim
 import { env } from '$amplify/env/claim-handle';
 import type { Schema } from '../../data/resource';
 
-// claim-handle — System Design §4.2, ADR-008, ties to FR-AUTH-3/4 and V-1
+// claim-handle — System Design §4.2, ADR-008, ADR-010, ties to FR-AUTH-3/4 and V-1
+//
+// Revised in v1.2 (ADR-010): no longer the primary onboarding path — sign-up now
+// submits the desired handle as a Cognito custom attribute, and post-confirmation
+// claims it atomically the moment the emailed code is verified (no authenticated
+// session exists yet at signUp() time for THIS function to be callable then).
+// This function is retained as the Settings-only recovery path for a member whose
+// post-confirmation claim lost the race: the "ALREADY_CLAIMED" check below is what
+// keeps it a first-claim-only operation, not a handle-change mechanism (System
+// Design §9 #6 — handle changes are still unsupported; claiming a first handle is
+// the one exception).
 //
 // Conditional write against the Handle table, keyed on the handle string,
 // conditioned on `attribute_not_exists(handle)`. That condition is not
@@ -70,7 +80,9 @@ export const handler: AppSyncResolverHandler<Args, Result> = async (event) => {
         // handle is orphaned-reserved — a known limitation, not silently
         // "fixed" by pretending the claim succeeded.
         await client.models.Handle.delete({ handle }).catch(() => undefined);
-        throw new Error(`claim-handle: failed to update UserProfile after reserving "${handle}": ${JSON.stringify(updateErrors)}`);
+        throw new Error(
+            `claim-handle: failed to update UserProfile after reserving "${handle}": ${JSON.stringify(updateErrors)}`,
+        );
     }
 
     return { success: true, handle: createdHandle.handle, error: null };
@@ -78,6 +90,8 @@ export const handler: AppSyncResolverHandler<Args, Result> = async (event) => {
 
 function isConditionalCheckFailure(errors: ReadonlyArray<{ errorType?: string; message?: string }>): boolean {
     return errors.some(
-        (e) => e.errorType?.includes('ConditionalCheckFailedException') || e.message?.includes('ConditionalCheckFailedException'),
+        (e) =>
+            e.errorType?.includes('ConditionalCheckFailedException') ||
+            e.message?.includes('ConditionalCheckFailedException'),
     );
 }

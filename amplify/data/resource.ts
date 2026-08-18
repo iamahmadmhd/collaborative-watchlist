@@ -19,10 +19,12 @@ const schema = a
         UserProfile: a
             .model({
                 // id: Cognito sub (primary key, implicit)
-                // Not .required(): post-confirmation (System Design §4.2) creates this row
-                // at email verification, before the member has claimed a handle (FR-AUTH-3,
-                // set during first-run onboarding via a separate owner update). A required
-                // field here would make that create impossible.
+                // Not .required(): post-confirmation (System Design §4.2, ADR-010) sets
+                // handle in the same create() call when the sign-up-time claim succeeds,
+                // but that claim can lose a race — this field stays optional so the
+                // UserProfile row can still be created when it does, with the member
+                // claiming a handle afterward via claim-handle from Settings (a separate
+                // owner update, the recovery path — not the common case since v1.2).
                 handle: a.string(),
                 displayName: a.string(),
                 avatarUrl: a.string(),
@@ -242,10 +244,13 @@ const schema = a
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(tmdbProxy)),
 
-        // FR-AUTH-3/4, ADR-008, V-1. success:false + error distinguishes the three
-        // rejection reasons so the client doesn't have to parse GraphQL error strings
-        // (System Design §2.5 — the client must handle server rejection gracefully
-        // even after its own async availability check passed).
+        // FR-AUTH-3/4, ADR-008, V-1, ADR-010. success:false + error distinguishes the
+        // three rejection reasons so the client doesn't have to parse GraphQL error
+        // strings (System Design §2.5 — the client must handle server rejection
+        // gracefully even after its own async availability check passed). Since v1.2
+        // this mutation is called only from Settings, as the recovery path for a
+        // member whose sign-up-time claim (post-confirmation) lost the race — not
+        // during sign-up itself. ALREADY_CLAIMED is what keeps it first-claim-only.
         ClaimHandleResult: a.customType({
             success: a.boolean().required(),
             handle: a.string(), // set only when success is true

@@ -1,4 +1,86 @@
+/* Design System §3.3. Self-hosted would need a new dependency (not added without
+   asking) — Google Fonts covers this without touching NFR-PERF-4's JS budget, which
+   only measures the eager JS chunk. System fallbacks keep text legible before/without
+   the network fetch. Must precede @import 'tailwindcss' below: all @import rules must
+   come before any other CSS, and Tailwind's import expands into @layer content that
+   would otherwise push this one out of position (browsers silently drop an @import
+   that arrives too late). */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
 @import 'tailwindcss';
+
+/* Design System §3.2. Tokens are named by role, not appearance, so they survive
+   inversion between themes. This block is the static half of theming: the values and
+   the .dark override. Toggling .dark onto <html> (three states — light/dark/system —
+   plus the pre-paint flash-prevention script, FR-THEME-1/4/5) is app-provider logic,
+   not styling, and lands with app/providers, not here. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Names reconciled in v1.2 against the screen-design board (docs/design/,
+   System Design §3.2) — `raised`/`muted` are the board's own names; the earlier
+   `surface-raised`/`text-muted` are gone, not aliased, so a stray old class name
+   fails visibly instead of silently. Values are unchanged from v1.0/v1.1 — only
+   the property names moved. `ok`/`danger` and the five member-attribution hues
+   (`m1`..`m5`) are new: taken verbatim from the board, which is the source for
+   colours not previously written down anywhere. */
+@layer base {
+    :root {
+        --surface: #eaecef;
+        --raised: #fdfdfd;
+        --text: #191c22;
+        --muted: #5a6270;
+        --border: #c5cad2;
+        --accent: #1b3bd0;
+        --accent-contrast: #ffffff;
+        --ok: oklch(0.52 0.13 152);
+        --danger: oklch(0.52 0.19 25);
+        --m1: oklch(0.55 0.15 258);
+        --m2: oklch(0.55 0.15 24);
+        --m3: oklch(0.55 0.15 152);
+        --m4: oklch(0.55 0.15 88);
+        --m5: oklch(0.55 0.15 310);
+        color-scheme: light;
+    }
+
+    .dark {
+        --surface: #131519;
+        --raised: #1c1f26;
+        --text: #e6e8ec;
+        --muted: #9aa3b2;
+        --border: #2e333d;
+        --accent: #6b8bff;
+        --accent-contrast: #0e1117;
+        --ok: oklch(0.78 0.13 152);
+        --danger: oklch(0.72 0.16 25);
+        --m1: oklch(0.72 0.14 258);
+        --m2: oklch(0.72 0.14 24);
+        --m3: oklch(0.72 0.14 152);
+        --m4: oklch(0.72 0.14 88);
+        --m5: oklch(0.72 0.14 310);
+        color-scheme: dark;
+    }
+}
+
+@theme inline {
+    --color-surface: var(--surface);
+    --color-raised: var(--raised);
+    --color-text: var(--text);
+    --color-muted: var(--muted);
+    --color-border: var(--border);
+    --color-accent: var(--accent);
+    --color-accent-contrast: var(--accent-contrast);
+    --color-ok: var(--ok);
+    --color-danger: var(--danger);
+    --color-m1: var(--m1);
+    --color-m2: var(--m2);
+    --color-m3: var(--m3);
+    --color-m4: var(--m4);
+    --color-m5: var(--m5);
+
+    /* Design System §3.3 */
+    --font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Public Sans', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
 
 * {
     box-sizing: border-box;
@@ -12,4 +94,7 @@ body,
 
 body {
     margin: 0;
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    font-family: var(--font-body);
 }

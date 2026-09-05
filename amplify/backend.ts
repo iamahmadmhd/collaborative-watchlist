@@ -8,7 +8,7 @@ import { CfnResource, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { auth } from './auth/resource';
 import { data } from './data/resource';
 import { postConfirmation } from './functions/post-confirmation/resource';
-import { claimHandle } from './functions/claim-handle/resource';
+import { claimUsername } from './functions/claim-username/resource';
 import { tmdbProxy } from './functions/tmdb-proxy/resource';
 import { membership } from './functions/membership/resource';
 import { permissionFanout } from './functions/permission-fanout/resource';
@@ -17,7 +17,7 @@ const backend = defineBackend({
     auth,
     data,
     postConfirmation,
-    claimHandle,
+    claimUsername,
     tmdbProxy,
     membership,
     permissionFanout,
@@ -47,7 +47,7 @@ tmdbCacheTable.grantReadWriteData(backend.tmdbProxy.resources.lambda);
 // WatchlistMember atomically via DynamoDB TransactWriteItems — AppSync/Amplify Data
 // has no transactional multi-model mutation, so this bypasses the generated
 // resolvers for its actual writes entirely (see membership/handler.ts). It also
-// reads Handle to resolve @handle -> userId for addMember (ADR-008).
+// reads Username to resolve @username -> userId for addMember (ADR-008).
 //
 // grantReadWriteData() is deliberately not used: it does not include
 // dynamodb:TransactWriteItems, which is IAM's distinct action for that API call even
@@ -57,16 +57,16 @@ tmdbCacheTable.grantReadWriteData(backend.tmdbProxy.resources.lambda);
 const watchlistTable = backend.data.resources.tables.Watchlist;
 const watchlistMemberTable = backend.data.resources.tables.WatchlistMember;
 const watchlistItemTable = backend.data.resources.tables.WatchlistItem;
-const handleTable = backend.data.resources.tables.Handle;
+const usernameTable = backend.data.resources.tables.Username;
 const membershipLambda = backend.membership.resources.lambda;
 
 watchlistTable.grant(membershipLambda, 'dynamodb:GetItem', 'dynamodb:TransactWriteItems');
 watchlistMemberTable.grant(membershipLambda, 'dynamodb:TransactWriteItems');
-handleTable.grant(membershipLambda, 'dynamodb:GetItem');
+usernameTable.grant(membershipLambda, 'dynamodb:GetItem');
 
 (membershipLambda as lambda.Function).addEnvironment('WATCHLIST_TABLE_NAME', watchlistTable.tableName);
 (membershipLambda as lambda.Function).addEnvironment('WATCHLIST_MEMBER_TABLE_NAME', watchlistMemberTable.tableName);
-(membershipLambda as lambda.Function).addEnvironment('HANDLE_TABLE_NAME', handleTable.tableName);
+(membershipLambda as lambda.Function).addEnvironment('USERNAME_TABLE_NAME', usernameTable.tableName);
 
 // System Design §4.5, §5.4. permission-fanout consumes DynamoDB Streams on both
 // Watchlist and WatchlistItem. Amplify Gen 2 does not expose stream configuration

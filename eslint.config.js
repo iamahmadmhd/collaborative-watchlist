@@ -138,6 +138,15 @@ export default tseslint.config(
         },
     },
     {
+        // The one frontend file allowed to import the 'aws-amplify' barrel — see its
+        // own header comment for why (Amplify.configure() has no subpath equivalent,
+        // same reasoning as the amplify/functions/* Lambda-handler exception below).
+        files: ['src/app/providers/amplify-config.ts'],
+        rules: {
+            'no-restricted-imports': 'off',
+        },
+    },
+    {
         // .amplify/ is where `ampx sandbox` actually writes generated env types (repo
         // root, not nested under amplify/ — verified against a real sandbox run).
         ignores: ['dist/**', '.amplify/**', '**/*.gen.ts'],

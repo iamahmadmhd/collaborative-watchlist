@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 
-// Design System §3, docs/design/Auth.dc.html (v1.2). Desktop: two-column split —
+// Design System §3, docs/design/Auth.dc.html (v1.4). Desktop: two-column split —
 // pitch copy + a sample attribution-stripe list on the left (raised background,
-// border-right), the form centered on the right. Mobile: single column, form only.
+// border-right), the form centered on the right. Mobile: a compact brand header
+// above the form only — the pitch copy itself doesn't repeat, matching the board.
 // The pitch panel is shared chrome across sign-up (which also handles returning
 // members — System Design §2.5, ADR-010) and verify, matching the board (present
 // outside its isSignup/isVerify conditional there).
@@ -19,19 +20,30 @@ const SAMPLE_ITEMS: { title: string; year: string; by: string; colorVar: string 
     { title: 'Wanda', year: '1970', by: '@kofi', colorVar: 'var(--m4)' },
 ];
 
+function Wordmark({ size }: { size: 'lg' | 'sm' }) {
+    return (
+        <div className='flex items-baseline gap-2'>
+            <span
+                className={`font-display text-text font-bold tracking-[-0.02em] ${size === 'lg' ? 'text-xl' : 'text-lg'}`}
+            >
+                Repertory
+            </span>
+            <span className='text-muted font-mono text-[10px]'>v1.0</span>
+        </div>
+    );
+}
+
 function PitchPanel() {
     return (
         <div className='border-border bg-raised hidden flex-col justify-between overflow-hidden border-r p-14 lg:flex'>
-            <div className='flex items-baseline gap-2'>
-                <span className='font-display text-text text-xl font-bold tracking-[-0.02em]'>Repertory</span>
-            </div>
+            <Wordmark size='lg' />
             <div className='flex max-w-110 flex-col gap-5'>
                 <h1 className='font-display text-text m-0 text-4xl leading-[1.06] font-bold tracking-[-0.03em]'>
                     Keep a watchlist with the people you actually watch films with.
                 </h1>
                 <p className='text-muted m-0 text-base leading-relaxed'>
-                    Every film in a shared list carries a stripe in the colour of whoever added it. No requests, no
-                    approvals — add a collaborator by handle and they can start programming.
+                    Build watchlists together. Invite friends by their username, add films from anywhere, and see at a
+                    glance who added what and who’s already seen it.
                 </p>
                 <div className='border-border flex flex-col gap-2.5 border-t pt-5'>
                     {SAMPLE_ITEMS.map((item) => (
@@ -45,10 +57,14 @@ function PitchPanel() {
                 </div>
             </div>
             <div className='flex items-center gap-2.5'>
-                <span className='border-accent text-accent rounded-xs border px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-widest'>
-                    TMDB
-                </span>
-                <span className='text-muted text-[11px]'>
+                <a href='https://www.themoviedb.org/' target='_blank' rel='noopener noreferrer'>
+                    <img
+                        src='https://www.themoviedb.org/assets/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg'
+                        alt='TMDB Logo'
+                        className='h-2.5 w-auto'
+                    />
+                </a>
+                <span className='text-muted text-xs'>
                     This product uses the TMDB API but is not endorsed or certified by TMDB.
                 </span>
             </div>
@@ -68,7 +84,10 @@ export function AuthPageShell({
     return (
         <div className='bg-surface grid min-h-svh grid-cols-1 lg:grid-cols-2'>
             <PitchPanel />
-            <div className='flex items-center justify-center p-8 lg:p-14'>
+            <div className='flex flex-col p-8 lg:items-center lg:justify-center lg:p-14'>
+                <div className='mb-8 lg:hidden'>
+                    <Wordmark size='sm' />
+                </div>
                 <div className='flex w-full max-w-100 flex-col gap-5'>
                     <div className='flex flex-col gap-1.5'>
                         <h2 className='font-display text-text m-0 text-[27px] leading-[1.1] font-bold tracking-tight'>

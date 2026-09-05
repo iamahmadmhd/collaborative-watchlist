@@ -98,3 +98,10 @@ body {
     color: var(--color-text);
     font-family: var(--font-body);
 }
+
+button,
+input:where([type='button'], [type='reset'], [type='submit']),
+::file-selector-button,
+a {
+    cursor: pointer;
+}

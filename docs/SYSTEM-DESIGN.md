@@ -2,7 +2,27 @@
 
 ## Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.3 Date: 17 August 2026 Companion to: SRS v1.3
+Version: 1.5 Date: 20 August 2026 Companion to: SRS v1.5
+
+Revision note (v1.5): The sign-up form now attempts account creation before
+checking for an existing account, not the reverse. Confirmed against the deployed
+user pool (a raw `InitiateAuth` call against a nonexistent email): Cognito's
+account-existence protection is enabled by default on the app client and makes
+sign-in return an identical-looking challenge whether or not the account exists —
+no email is sent, no exception is thrown, and the client-side branch that used to
+detect "this is a new member" was unreachable. Account creation isn't covered by
+that protection (it must reveal a duplicate to avoid overwriting an account), so
+it stays a reliable signal. See ADR-012. Affected: §2.5, §4.2.
+
+Revision note (v1.4): The system now collects the username on its own screen,
+reached only after email verification succeeds, with a live availability check
+shown as the member types. Adopted here per ADR-011:
+`custom:handle` (the Cognito attribute that used to carry the username to
+`post-confirmation`) is retired outright — nothing needs it once the claim runs
+authenticated, after verification, via `claim-username`, the primary path again
+rather than Settings-only recovery. `post-confirmation` simplifies to UserProfile
+creation only. `displayName` is written for the first time, from the same new screen
+(FR-AUTH-5). Affected: §2.5, §4.1, §4.2, §9, and ADR-011 (new).
 
 Revision note (v1.3): No separate sign-in screen. `/sign-up` now handles both entry points — it attempts `signIn()` with the EMAIL_OTP challenge first (a lightweight existence check), and falls back to `signUp()` only on `UserNotFoundException`, at which point a handle is required (not before, since a returning member has no reason to supply one). Matches the design board's own overview, which enumerates only "/signup and /verify" for the whole flow. Six forms now, not seven. Affected: §2.5, §4.2.
 
@@ -121,10 +141,10 @@ On subscription interruption the client refetches rather than assuming continuit
 
 ### 2.5 Forms
 
-Six forms (revised in v1.3 — down from nine): sign up (the sole auth entry point — email, and a handle if the account turns out to be new; attempts sign-in first, FR-AUTH-1/3, §4.2), verify code (shared by both outcomes of that attempt), claim handle (the Settings-only recovery path, §4.2), create/edit list, add member, profile settings. request reset and confirm reset are gone — there is no password to reset (SRS v1.2); sign in is gone as a separate form — v1.3 folded it into sign up, since a passwordless flow has no second credential to distinguish "sign in" from "register" until the server says whether the account exists.  
+Seven forms (revised in v1.4 — up from six): sign up (email only, no username field anymore — attempts account creation first, falling back to sign-in, FR-AUTH-1, §4.2, ADR-012), verify code (shared by both outcomes of that attempt), username (new in v1.4 — reached only once verification succeeds for a new member; chooses a username, live-checked as typed, plus an optional display name; runs authenticated, §4.2), claim username (the Settings-only path for a member who verified but never completed the username screen — calls the same function, §4.2), create/edit list, add member, profile settings.  
 Validation ownership is exclusive. react-hook-form with Zod owns validation and form state. Base UI's Field provides label, description, and error ARIA wiring only. Base UI's own validate and Form error props are not used. Two validation systems on one input produce errors that clear at different times.  
 Native inputs use a register. Base UI's Select, Combobox, and OTPField require Controller; this wiring lives inside the shared/ui wrapper for each, so it is written once per component type rather than once per form.  
-Handle availability checking is UX only. Async validation gives immediate feedback, but FR-AUTH-4's atomicity comes from the server-side conditional write — now performed inside `post-confirmation` at registration, or inside `claim-handle` for the Settings recovery path (§4.2). Two members can pass the async check simultaneously; the submit path must handle server rejection gracefully.
+Username availability checking is UX only. The username screen's live indicator reads the `Username` sentinel model directly (`allow.authenticated().to(['read'])` — no new resolver needed, since the screen already runs authenticated), but FR-AUTH-4's atomicity comes from the server-side conditional write inside `claim-username` (§4.2) — the same function whether called from the username screen or from Settings. Two members can pass the live check simultaneously; the submit path must handle server rejection gracefully.
 
 ### 2.6 Code Splitting
 
@@ -266,10 +286,10 @@ amplify/
   auth/resource.ts              defineAuth \+ post-confirmation trigger
   data/resource.ts              schema, auth rules, custom operations
   functions/
-    post-confirmation/          create UserProfile + claim custom:handle atomically (v1.2)
+    post-confirmation/          create UserProfile only (v1.4 — username claim moved out)
     tmdb-proxy/                 all four TMDB queries
     membership/                 add / remove / leave
-    claim-handle/               Settings-only recovery claim (v1.2 — no longer the primary path)
+    claim-username/             username claim — primary path again in v1.4
     permission-fanout/          DynamoDB stream consumer
 ```
 
@@ -279,8 +299,8 @@ Five functions, and the restraint is deliberate. Item CRUD, list CRUD, saves, an
 
 tmdb-proxy \- handles all four TMDB queries in one function, routing on the GraphQL field name. Separate functions per query would create four cold-start surfaces on the discovery path; one warm function serving all discovery traffic better serves NFR-PERF-1. Requires an authenticated caller as of v1.1 (ADR-009); the user-pool identity on each invocation is what NFR-SEC-3's per-principal throttle keys on. Holds the TMDB credential via secret(), checks the cache table, parses responses through Zod before returning.  
 membership \- the transactional one. Adding a collaborator writes a WatchlistMember record and pushes the user into the parent's editors or viewers array: two tables, and FR-MEM-8 forbids an observable partial result. TransactWriteItems provides atomicity. Generated resolvers write one item each and cannot satisfy this. Remove and leave are the same transaction inverted, with different role checks.  
-claim-handle \- conditional write against the Handle table keyed on the handle string, conditioned on attribute\_not\_exists. The mechanism behind FR-AUTH-4 and V-1. Revised in v1.2: no longer called during sign-up (post-confirmation claims the handle directly, below) — retained solely as the Settings-screen recovery path for a member whose sign-up-time claim lost the race (FR-AUTH-3's documented exception). Its own logic is unchanged; only its caller and the product surface that reaches it changed.  
-post-confirmation \- Cognito trigger firing once email-code verification succeeds. Creates the UserProfile record (required because Cognito cannot be queried from the client, so display names would otherwise be unavailable, FR-MEM-10) and, new in v1.2, atomically claims the handle submitted at sign-up via the \`custom:handle\` attribute — the same conditional Handle-table write claim-handle performs, run here because no authenticated session exists yet at signUp() time for the client to call claim-handle itself. A conditional-check failure (handle taken between the client's live-availability check and this trigger) does not fail the sign-up: verification already succeeded, so UserProfile is created without a handle, and the member claims one later via claim-handle from Settings.  
+claim-username \- conditional write against the Username table keyed on the username string, conditioned on attribute\_not\_exists. The mechanism behind FR-AUTH-4 and V-1. Revised again in v1.4 (ADR-011): back to being the primary path, called from the new post-verification username screen (§2.5) with an authenticated session already established, rather than solely a Settings recovery mechanism (v1.2's framing). Settings still calls the same function, now for the narrower case of a member who verified but abandoned the flow before finishing the username screen. Its own conditional-write logic is unchanged.  
+post-confirmation \- Cognito trigger firing once email-code verification succeeds. As of v1.4 its scope is one job: create the UserProfile record (required because Cognito cannot be queried from the client, so display names would otherwise be unavailable, FR-MEM-10). It no longer claims a username — there is no signup-time Cognito attribute to read anymore (custom:handle is retired, ADR-011); the username step now runs afterward, authenticated, via claim-username.  
 permission-fanout \- DynamoDB stream consumer; see §4.5.
 
 ### 4.3 Authentication and Authorization Modes
@@ -328,8 +348,8 @@ The hot path is unaffected. Fan-out fires only on membership change, which is ra
 
 | Model           | Primary key           | Notes                                                 |
 | :-------------- | :-------------------- | :---------------------------------------------------- |
-| UserProfile     | id (Cognito sub)      | handle, displayName, avatarUrl                        |
-| Handle          | handle                | uniqueness sentinel; conditional write target         |
+| UserProfile     | id (Cognito sub)      | username, displayName, avatarUrl                      |
+| Username        | username              | uniqueness sentinel; conditional write target         |
 | Watchlist       | id                    | ownerId, editors\[\], viewers\[\], itemCount          |
 | WatchlistMember | (watchlistId, userId) | role, joinedAt                                        |
 | WatchlistItem   | (watchlistId, tmdbId) | snapshot, addedBy, position, editors\[\], viewers\[\] |
@@ -351,7 +371,7 @@ WatchlistMember and the permission arrays are not redundant. The arrays feed App
 | 5   | /lists/:id     | my watched state          | WatchStatus GSI byUserAndList        |
 | 6   | /lists/:id     | members and roles         | WatchlistMember PK query             |
 | 7   | /lists/:id     | my role                   | point read                           |
-| 8   | add member     | @handle → user            | Handle point read                    |
+| 8   | add member     | @username → user          | Username point read                  |
 
 Pattern 2 warrants emphasis. FR-SAVE-2 requires a saved state on every card in a discovery grid. Per-card lookup is 20 point reads per scroll. Instead, the user's saved tmdbId values are fetched once into a Set and checked in memory \- saved films are personal-scale, a few hundred at most. Invalidated on save or unsave.  
 Pattern 7 is a genuine point read thanks to the composite key, which matters because useWatchlistRole runs on every render of the detail page.  
@@ -549,6 +569,48 @@ Consequences:
 - Two of five previously-built auth forms (request reset, confirm reset) are deleted outright; sign up and verify are substantially rewritten. Sign in as a separate form does not survive even this revision — v1.3 (§2.5) folds it into sign up, since passwordless auth has nothing to distinguish "sign in" from "register" on the client side until the server says whether the account exists.
 - FR-AUTH-3's "handles are unchangeable this release" limitation (§9 #6) gets one explicit exception: a member who has never successfully claimed one may still do so, via \`claim-handle\` from Settings. Changing an _already-claimed_ handle remains unsupported.
 
+### ADR-011 \- Post-verification username step
+
+Status: Accepted (v1.4, supersedes ADR-010's single-step registration framing for FR-AUTH-1; ADR-010's core decision — passwordless, no reset flow — stands)  
+Context: \`Auth.dc.html\` (\`docs/design/\`) moved again since ADR-010 was accepted: the username is now its own screen, reached only after the emailed code is verified, with a live availability check shown as the member types. ADR-010 was built against the board's _previous_ revision — username collected inline with email, unauthenticated, via a \`custom:handle\` Cognito attribute consumed by \`post-confirmation\`. Per this document's own design-reference rule (§10), a board/spec conflict is resolved here explicitly, not silently.  
+Decision: Adopt the board's current flow. Move username claiming to a new, authenticated, post-verification screen; retire the \`custom:handle\` Cognito attribute entirely (drop, not rename — nothing needs it once the claim happens after verification).  
+Options considered:
+
+| Option                                                                   | Benefit                                                                                                                                          | Cost                                                                                                                                                                                                                       |
+| :----------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. Keep the v1.2/v1.3 flow, restyle only                                 | no backend rework                                                                                                                                | board's stated flow isn't built; the live availability check the board now shows would have to be faked, or built as an anonymous query, which V-10 forbids                                                                |
+| B. Adopt the board's post-verification flow                              | matches current design intent; makes the live availability check safe to build for real, since it runs authenticated instead of pre-verification | \`custom:handle\` retired (forces a sandbox reset — Cognito custom attributes aren't mutable in place); \`post-confirmation\` simplified; \`claim-username\`'s "recovery-only" framing (ADR-010) reverts to "primary path" |
+| C. Keep collecting the username at signup, add a live-check query anyway | smaller diff                                                                                                                                     | still doesn't match the board (still one step, still pre-verification); the live check would still be an anonymous query — the exact surface V-10 exists to forbid, just under different framing                           |
+
+Decision: Option B.  
+Rationale: the board is again the more specific, more recently authored artifact for this exact question, and unlike ADR-010's predecessor conflict, this one has a clean resolution rather than a trade-off — moving the step after verification doesn't just match the board, it's what makes the board's own live-check affordance implementable without reopening the anonymous-surface prohibition ADR-009/V-10 established. Option C was rejected because it reproduces the exact defect ADR-009/V-10 close off, for the sake of a smaller diff.  
+Consequences:
+
+- \`custom:handle\` is removed from \`amplify/auth/resource.ts\` outright, not renamed to \`custom:username\` — the new flow has no use for a signup-time attribute at all. Removing a Cognito custom attribute is not an in-place operation; the deployed sandbox's user pool must be recreated.
+- \`post-confirmation\` (§4.2) shrinks to one responsibility: create the bare UserProfile record. It no longer touches the Username sentinel table.
+- \`claim-username\` becomes the sole username-claiming mechanism, called from two surfaces: the new post-verification username screen (primary, the common case) and Settings (recovery, for a member who verified but never finished that screen). Its own conditional-write logic (ADR-008) is unchanged — only its callers changed.
+- \`displayName\` (\`amplify/data/resource.ts\`) is written for the first time, from the same new screen — FR-AUTH-5 goes from spec'd-but-unimplemented to implemented.
+
+### ADR-012 \- Account creation attempted before sign-in, not the reverse
+
+Status: Accepted (v1.5, corrects the call order ADR-010 originally chose; ADR-010's other decisions — passwordless, one screen for both entry points — stand)  
+Context: The sign-up form (§2.5) discovers whether a visitor already has an account from the API response rather than asking them to pick the right screen (ADR-010). As originally built, it did this by attempting sign-in first and catching the "no such user" exception to detect a new member. Tested against the deployed user pool: a raw \`InitiateAuth\` call for a definitely-nonexistent email returns a full, real-looking \`EMAIL_OTP\` challenge — no exception, no email sent. \`PreventUserExistenceErrors\` is \`ENABLED\` on the app client (Amplify Gen2's default, and the same category of protection NFR-SEC-7 requires of username lookup — not a misconfiguration to remove). Sign-in-first can therefore never distinguish a new visitor from a returning one: every attempt looks like a returning member, and a first-time visitor's account is never created.  
+Decision: Attempt account creation first. On a duplicate-account error, fall back to sign-in for the returning-member path.  
+Options considered:
+
+| Option                                              | Benefit                                                                 | Cost                                                                                                         |
+| :-------------------------------------------------- | :---------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------- |
+| A. Keep sign-in-first, disable existence protection | smallest code change                                                    | reopens exactly the member-enumeration hole NFR-SEC-7/V-10 exist to close, just on email instead of username |
+| B. Swap to account-creation-first                   | reliable (confirmed against the real pool); touches no security setting | error handling keys off a different exception; the one-screen mechanism (ADR-010) itself is unaffected       |
+| C. Reintroduce a separate sign-in screen            | sidesteps the detection problem entirely                                | undoes v1.3's consolidation (§2.5) for no reason connected to this defect; the board still shows one screen  |
+
+Decision: Option B.  
+Rationale: ADR-010 chose sign-in-first partly to avoid a validation trap around the username field this screen used to collect inline — not accepting an empty field silently for a new member. That concern no longer exists: ADR-011 moved username collection off this screen entirely. Nothing is lost by reversing the order, and it's the only option that's both secure and actually functional. A duplicate-account error on creation isn't suppressed by \`PreventUserExistenceErrors\` — revealing that collision is unavoidable, since silently overwriting an existing account would be worse.  
+Consequences:
+
+- The sign-up form's submit handler tries account creation first; a duplicate-account error triggers the sign-in fallback, not the reverse.
+- No schema, backend function, or Cognito configuration change — this is a client-side call-order correction only.
+
 ## 9\. Known Limitations
 
 Stated explicitly rather than discovered later:
@@ -558,7 +620,7 @@ Stated explicitly rather than discovered later:
 3. Snapshots drift from TMDB \- titles and posters may age; no refresh job in this release.
 4. Cold start on first discovery after sign-in \- discovery runs through Lambda. Node cold starts sit within NFR-PERF-1's 4-second cold budget. Provisioned concurrency would remove it but bills hourly regardless of traffic; rejected as the wrong trade for this application. Under v1.1 this lands slightly better than it did: the cold start is absorbed behind the authentication step rather than being a first-time visitor's first impression of the product.
 5. Collaborators are added without consent (FR-MEM-2). Mitigated by a 20-member cap and prominent leave affordance, not by moderation.
-6. Handle _changes_ are not supported in this release; the sentinel table would need a release-and-claim transaction. One exception (ADR-010, v1.2): a member who never successfully claimed a handle at all — because \`post-confirmation\`'s sign-up-time claim lost a race — may claim a first one afterward via \`claim-handle\` from Settings. That is claiming, not changing; it stays a one-shot, first-claim-only operation.
+6. Username _changes_ are not supported in this release; the sentinel table would need a release-and-claim transaction. One exception (ADR-011, v1.4): a member who verified but never completed the username screen — including one who abandoned it before submitting — may still claim a first one via \`claim-username\`, either from that screen or, later, from Settings. That is claiming, not changing; it stays a one-shot, first-claim-only operation.
 7. Nothing is visible before registration (ADR-009). A reviewer or prospective user sees only a sign-in screen. Mitigated by a seeded demonstration account, not by reopening an anonymous surface.
 8. Every discovery session now costs a Cognito token exchange before the first TMDB call. Negligible in latency terms against NFR-PERF-1, but it means discovery can no longer be demonstrated with a bare curl against the endpoint.
 

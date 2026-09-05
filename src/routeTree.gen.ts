@@ -11,7 +11,8 @@
 import { Route as rootRouteImport } from './app/router/__root'
 import { Route as IndexRouteImport } from './app/router/index'
 import { Route as AuthRouteRouteImport } from './app/router/_auth/route'
-import { Route as AuthSignUpRouteImport } from './app/router/_auth/sign-up'
+import { Route as AuthGetStartedRouteImport } from './app/router/_auth/get-started'
+import { Route as AuthSetUsernameRouteImport } from './app/router/_auth/set-username'
 import { Route as AuthVerifyRouteImport } from './app/router/_auth/verify'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,9 +24,14 @@ const AuthRouteRoute = AuthRouteRouteImport.update({
   id: '/_auth',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthSignUpRoute = AuthSignUpRouteImport.update({
-  id: '/sign-up',
-  path: '/sign-up',
+const AuthGetStartedRoute = AuthGetStartedRouteImport.update({
+  id: '/get-started',
+  path: '/get-started',
+  getParentRoute: () => AuthRouteRoute,
+} as any)
+const AuthSetUsernameRoute = AuthSetUsernameRouteImport.update({
+  id: '/set-username',
+  path: '/set-username',
   getParentRoute: () => AuthRouteRoute,
 } as any)
 const AuthVerifyRoute = AuthVerifyRouteImport.update({
@@ -36,27 +42,36 @@ const AuthVerifyRoute = AuthVerifyRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/sign-up': typeof AuthSignUpRoute
+  '/get-started': typeof AuthGetStartedRoute
+  '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/sign-up': typeof AuthSignUpRoute
+  '/get-started': typeof AuthGetStartedRoute
+  '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_auth': typeof AuthRouteRouteWithChildren
-  '/_auth/sign-up': typeof AuthSignUpRoute
+  '/_auth/get-started': typeof AuthGetStartedRoute
+  '/_auth/set-username': typeof AuthSetUsernameRoute
   '/_auth/verify': typeof AuthVerifyRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/sign-up' | '/verify'
+  fullPaths: '/' | '/get-started' | '/set-username' | '/verify'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/sign-up' | '/verify'
-  id: '__root__' | '/' | '/_auth' | '/_auth/sign-up' | '/_auth/verify'
+  to: '/' | '/get-started' | '/set-username' | '/verify'
+  id:
+    | '__root__'
+    | '/'
+    | '/_auth'
+    | '/_auth/get-started'
+    | '/_auth/set-username'
+    | '/_auth/verify'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -80,11 +95,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_auth/sign-up': {
-      id: '/_auth/sign-up'
-      path: '/sign-up'
-      fullPath: '/sign-up'
-      preLoaderRoute: typeof AuthSignUpRouteImport
+    '/_auth/get-started': {
+      id: '/_auth/get-started'
+      path: '/get-started'
+      fullPath: '/get-started'
+      preLoaderRoute: typeof AuthGetStartedRouteImport
+      parentRoute: typeof AuthRouteRoute
+    }
+    '/_auth/set-username': {
+      id: '/_auth/set-username'
+      path: '/set-username'
+      fullPath: '/set-username'
+      preLoaderRoute: typeof AuthSetUsernameRouteImport
       parentRoute: typeof AuthRouteRoute
     }
     '/_auth/verify': {
@@ -98,12 +120,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthRouteRouteChildren {
-  AuthSignUpRoute: typeof AuthSignUpRoute
+  AuthGetStartedRoute: typeof AuthGetStartedRoute
+  AuthSetUsernameRoute: typeof AuthSetUsernameRoute
   AuthVerifyRoute: typeof AuthVerifyRoute
 }
 
 const AuthRouteRouteChildren: AuthRouteRouteChildren = {
-  AuthSignUpRoute: AuthSignUpRoute,
+  AuthGetStartedRoute: AuthGetStartedRoute,
+  AuthSetUsernameRoute: AuthSetUsernameRoute,
   AuthVerifyRoute: AuthVerifyRoute,
 }
 

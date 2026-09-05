@@ -46,14 +46,12 @@ Also read:
    discovery in v1.1). The Discovery screen's caption in the board still reads
    "Guest-accessible trending grid" — a v1.0 leftover. Treat the board as
    potentially stale against v1.1 until reconciled, not as silently authoritative.
-3. **Auth flow mismatch.** The board's `Auth.dc.html` shows email + handle
-   entered together at signup, verified by a 6-digit code — no password
-   anywhere, no separate reset flow. `docs/SRS.md` FR-AUTH-1 ("registration
-   with an email address and password") and FR-AUTH-6 ("password reset via
-   email") describe a password-based flow, and handle claiming is documented
-   (System Design §4.2) as a _post-verification_ step via the `claim-handle`
-   function, which requires an authenticated caller. These are not reconcilable
-   by restyling — flag to the user rather than picking a side.
+
+The auth flow (`Auth.dc.html`) is authoritative and the docs follow it: email
+only at signup, a one-time code verifies it, and then — authenticated, on its
+own screen — the member claims a username, with a live availability check, via
+`claim-username`. No password anywhere, no separate reset flow. See ADR-011 and
+SRS FR-AUTH-1/3/4.
 
 Design System §3 (tokens, typography, the attribution-stripe mechanism) and the
 ADRs in System Design §8 remain authoritative if anything here conflicts with

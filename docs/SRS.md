@@ -2,7 +2,28 @@
 
 ## Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.3 Date: 17 August 2026 Status: Approved
+Version: 1.5 Date: 20 August 2026 Status: Approved
+
+Revision note (v1.5): FR-AUTH-1's registration attempt now tries account creation
+before checking for an existing account, not the reverse — the order in which the
+two Cognito calls run, not a change to what a visitor sees. Confirmed against the
+deployed user pool: Cognito's account-existence protection (enabled by default,
+the same category of guarantee NFR-SEC-7 requires for usernames) makes checking
+for an existing account first indistinguishable from creating a new one — no
+email is sent and no account is created either way, so a first-time visitor could
+never actually register. Attempting creation first is unaffected, since revealing
+a duplicate on creation is unavoidable there. Affected: FR-AUTH-1. See System
+Design v1.5 §4.2 and ADR-012.
+
+Revision note (v1.4): The system now collects the username on its own screen,
+reached only after the emailed code is verified, with a live availability check
+shown as the member types. FR-AUTH-1 no longer promises registration "in one step."
+Running that screen after verification, while the member already holds a session, is
+what makes the live availability check safe to build server-side — doing the same
+check pre-verification would have been an anonymous query, which V-10 forbids. A
+first-time member passes through this step once, post-verification (§2.2). Affected:
+§2.2, FR-AUTH-1/3/4, FR-MEM-1/10, NFR-SEC-7, V-1, V-6. See System Design v1.4 §4.2
+and ADR-011.
 
 Revision note (v1.3): There is no separate sign-in screen. A passwordless flow makes
 "sign in" and "register" the same action from the visitor's side — enter an email,
@@ -45,7 +66,7 @@ It is written for the developer implementing the system and for any reviewer ass
 The system provides:
 
 - Browsing and search of film data sourced from TMDB, available to authenticated members only
-- Account registration with a unique public handle
+- Account registration with a unique public username
 - Private per-user saved films
 - User-created watchlists containing films drawn from TMDB
 - Multi-user collaboration on watchlists with role-based permissions
@@ -61,7 +82,7 @@ The system does not provide film data of its own. TMDB is the sole source of fil
 | TMDB         | The Movie Database, the external film metadata provider                                                                                                            |
 | Visitor      | A person who has not authenticated. Reaches only the authentication screens; no film data is served to them. Replaces the former "Guest" class, withdrawn in v1.1. |
 | Member       | A registered, authenticated user                                                                                                                                   |
-| Handle       | A unique, publicly visible identifier chosen by a member (e.g. @sarah)                                                                                             |
+| Username     | A unique, publicly visible identifier chosen by a member (e.g. @sarah)                                                                                             |
 | Watchlist    | A named, ordered collection of films owned by one member                                                                                                           |
 | Collaborator | A member granted access to a watchlist they do not own                                                                                                             |
 | Snapshot     | Denormalised film display fields (title, poster path, release year) stored alongside a TMDB reference                                                              |
@@ -82,13 +103,13 @@ Consequence of v1.1: with unauthenticated discovery removed, a reviewer sees not
 
 ### 2.2 User Classes
 
-| Class   | Description                          | Access                                                              |
-| :------ | :----------------------------------- | :------------------------------------------------------------------ |
-| Visitor | Unauthenticated                      | Authentication screens only — continue (sign up or sign in), verify |
-| Member  | Registered, verified user            | Discovery, search, and all personal features; may create watchlists |
-| Owner   | Member who created a given watchlist | Full control of that list, including membership                     |
-| Editor  | Collaborator with write access       | May add, remove, and reorder items; may not alter membership        |
-| Viewer  | Collaborator with read access        | May read items and track own watched state only                     |
+| Class   | Description                          | Access                                                                                                                                                    |
+| :------ | :----------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Visitor | Unauthenticated                      | Authentication screens only — continue (sign up or sign in), verify                                                                                       |
+| Member  | Registered, verified user            | Discovery, search, and all personal features; may create watchlists. A first-time member also passes through a one-time username step, post-verification. |
+| Owner   | Member who created a given watchlist | Full control of that list, including membership                                                                                                           |
+| Editor  | Collaborator with write access       | May add, remove, and reorder items; may not alter membership                                                                                              |
+| Viewer  | Collaborator with read access        | May read items and track own watched state only                                                                                                           |
 
 Roles are scoped per watchlist. A member may be Owner of one list and Viewer of another simultaneously.
 
@@ -116,15 +137,15 @@ These are fixed inputs to the design phase, not outcomes of it:
 
 ### 3.1 Authentication and Identity
 
-| ID        | Requirement                                                                                                                                                                                                               | Priority |
-| :-------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------- |
-| FR-AUTH-1 | The system shall allow registration with an email address and a chosen handle in one step, authenticated by a one-time code sent to that address. No password shall be collected, stored, or offered as a sign-in method. | Must     |
-| FR-AUTH-2 | The system shall require email verification before granting member privileges.                                                                                                                                            | Must     |
-| FR-AUTH-3 | The system shall require each member to have a unique handle, claimed atomically at registration once verification succeeds, or — if that claim did not succeed — from Settings afterward.                                | Must     |
-| FR-AUTH-4 | The system shall reject a handle already claimed by another member, atomically, with no window in which two members hold the same handle.                                                                                 | Must     |
-| FR-AUTH-5 | The system shall allow members to set a display name and avatar.                                                                                                                                                          | Should   |
-| FR-AUTH-6 | The system shall allow members to sign out. Re-authentication issues a fresh one-time code; there is no persistent credential to reset.                                                                                   | Must     |
-| FR-AUTH-7 | The system shall never expose any member's email address to any other member through any interface.                                                                                                                       | Must     |
+| ID        | Requirement                                                                                                                                                                                                                                 | Priority |
+| :-------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------- |
+| FR-AUTH-1 | The system shall allow registration with an email address, authenticated by a one-time code sent to that address, after which the member chooses a unique username. No password shall be collected, stored, or offered as a sign-in method. | Must     |
+| FR-AUTH-2 | The system shall require email verification before granting member privileges.                                                                                                                                                              | Must     |
+| FR-AUTH-3 | The system shall require each member to have a unique username, claimed atomically once email verification succeeds, or — if that claim did not happen or did not succeed — from Settings afterward.                                        | Must     |
+| FR-AUTH-4 | The system shall reject a username already claimed by another member, atomically, with no window in which two members hold the same username.                                                                                               | Must     |
+| FR-AUTH-5 | The system shall allow members to set a display name and avatar.                                                                                                                                                                            | Should   |
+| FR-AUTH-6 | The system shall allow members to sign out. Re-authentication issues a fresh one-time code; there is no persistent credential to reset.                                                                                                     | Must     |
+| FR-AUTH-7 | The system shall never expose any member's email address to any other member through any interface.                                                                                                                                         | Must     |
 
 ### 3.2 Discovery
 
@@ -175,7 +196,7 @@ These are fixed inputs to the design phase, not outcomes of it:
 
 | ID        | Requirement                                                                                                                                                                  | Priority |
 | :-------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------- |
-| FR-MEM-1  | The Owner shall be able to add a collaborator by handle.                                                                                                                     | Must     |
+| FR-MEM-1  | The Owner shall be able to add a collaborator by username.                                                                                                                   | Must     |
 | FR-MEM-2  | The system shall add collaborators immediately, without requiring the invitee to accept.                                                                                     | Must     |
 | FR-MEM-3  | The Owner shall assign a role of Editor or Viewer when adding a collaborator, and shall be able to change it afterwards.                                                     | Must     |
 | FR-MEM-4  | The Owner shall be able to remove any collaborator.                                                                                                                          | Must     |
@@ -184,7 +205,7 @@ These are fixed inputs to the design phase, not outcomes of it:
 | FR-MEM-7  | The system shall enforce a maximum of 20 members per watchlist.                                                                                                              | Must     |
 | FR-MEM-8  | A membership change shall update both the membership record and the watchlist's permission state as a single logical operation; partial application shall not be observable. | Must     |
 | FR-MEM-9  | No member other than the Owner shall be able to alter the membership or permission state of a watchlist, including their own role.                                           | Must     |
-| FR-MEM-10 | Handle lookup shall return only public profile fields: handle, display name, and avatar.                                                                                     | Must     |
+| FR-MEM-10 | Username lookup shall return only public profile fields: username, display name, and avatar.                                                                                 | Must     |
 
 ### 3.7 Watched Tracking
 
@@ -254,7 +275,7 @@ The sole external interface. Consumed server-side over HTTPS. Subject to TMDB's 
 | NFR-SEC-4 | Permission revocation shall take effect within 30 seconds. A bounded window of continued read access after removal is accepted, justified by A-3, and shall be documented as a known limitation.                              |
 | NFR-SEC-5 | Secrets shall be held in managed secret storage and injected at runtime. No secret shall appear in source control.                                                                                                            |
 | NFR-SEC-6 | All traffic shall be over TLS.                                                                                                                                                                                                |
-| NFR-SEC-7 | Member enumeration shall not be possible. Handle lookup shall support exact match only, with no prefix search or listing.                                                                                                     |
+| NFR-SEC-7 | Member enumeration shall not be possible. Username lookup shall support exact match only, with no prefix search or listing.                                                                                                   |
 
 ### 5.2 Performance
 
@@ -311,12 +332,12 @@ Every combination below shall have an automated test asserting allow or deny at 
 
 | ID   | Target                                                                                                                                                     |
 | :--- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| V-1  | Concurrent claims on the same handle: exactly one succeeds.                                                                                                |
+| V-1  | Concurrent claims on the same username: exactly one succeeds.                                                                                              |
 | V-2  | Revocation propagates fully within the NFR-SEC-4 window.                                                                                                   |
 | V-3  | A Viewer's watched state is invisible to the Owner.                                                                                                        |
 | V-4  | Two clients on one watchlist observe each other's item changes live.                                                                                       |
 | V-5  | The TMDB credential is absent from the client bundle and from all client-observable network traffic.                                                       |
-| V-6  | Handle lookup returns no email address under any input.                                                                                                    |
+| V-6  | Username lookup returns no email address under any input.                                                                                                  |
 | V-7  | A partially failed membership change leaves no observable inconsistent state.                                                                              |
 | V-8  | Automated contrast checks pass on every view in both light and dark themes.                                                                                |
 | V-9  | Reordering a single item produces one write and one subscription event, independent of list length.                                                        |

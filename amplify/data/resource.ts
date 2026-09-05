@@ -1,6 +1,6 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
 import { postConfirmation } from '../functions/post-confirmation/resource';
-import { claimHandle } from '../functions/claim-handle/resource';
+import { claimUsername } from '../functions/claim-username/resource';
 import { tmdbProxy } from '../functions/tmdb-proxy/resource';
 import { membership } from '../functions/membership/resource';
 
@@ -19,13 +19,12 @@ const schema = a
         UserProfile: a
             .model({
                 // id: Cognito sub (primary key, implicit)
-                // Not .required(): post-confirmation (System Design §4.2, ADR-010) sets
-                // handle in the same create() call when the sign-up-time claim succeeds,
-                // but that claim can lose a race — this field stays optional so the
-                // UserProfile row can still be created when it does, with the member
-                // claiming a handle afterward via claim-handle from Settings (a separate
-                // owner update, the recovery path — not the common case since v1.2).
-                handle: a.string(),
+                // Not .required(): post-confirmation (System Design §4.2) only ever
+                // creates the bare row (ADR-011, v1.4) — the username is claimed
+                // afterward, authenticated, via claim-username (the post-verification
+                // username screen, or Settings for a member who abandoned that screen).
+                // This field stays optional to cover the window between those two steps.
+                username: a.string(),
                 displayName: a.string(),
                 avatarUrl: a.string(),
             })
@@ -35,24 +34,26 @@ const schema = a
                 // FR-AUTH-7: email is intentionally NOT a field here — never expose it.
             ]),
 
-        // Uniqueness sentinel for @handles (FR-AUTH-4, ADR-008). Conditional write
-        // (attribute_not_exists) happens implicitly in claim-handle's Handle.create()
+        // Uniqueness sentinel for @usernames (FR-AUTH-4, ADR-008). Conditional write
+        // (attribute_not_exists) happens implicitly in claim-username's Username.create()
         // call — that's the standard behaviour of Amplify's generated create resolver
-        // against this model's primary key, the handle string itself.
-        Handle: a
+        // against this model's primary key, the username string itself. Read directly
+        // (allow.authenticated below) by the username screen's live-availability check
+        // (System Design §2.5, ADR-011) — no separate query resolver needed for that.
+        Username: a
             .model({
-                handle: a.string().required(),
+                username: a.string().required(),
                 userId: a.string().required(),
             })
-            .identifier(['handle']) // load-bearing: without this, Amplify injects an
-            // auto-generated `id` as the real primary key instead, and Handle.create()'s
+            .identifier(['username']) // load-bearing: without this, Amplify injects an
+            // auto-generated `id` as the real primary key instead, and Username.create()'s
             // conditional check becomes attribute_not_exists(id) — always true for a new
-            // row, i.e. no uniqueness protection at all. FR-AUTH-4 / V-1 depend on `handle`
+            // row, i.e. no uniqueness protection at all. FR-AUTH-4 / V-1 depend on `username`
             // itself being the identifier.
             .authorization((allow) => [
                 allow.authenticated().to(['read']),
                 // No user-facing write rule exists on this model at all. The only writer
-                // is claim-handle, via the schema-level allow.resource(claimHandle) grant
+                // is claim-username, via the schema-level allow.resource(claimUsername) grant
                 // below — that's what makes it structurally the only writer, not discipline.
             ]),
 
@@ -244,30 +245,31 @@ const schema = a
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(tmdbProxy)),
 
-        // FR-AUTH-3/4, ADR-008, V-1, ADR-010. success:false + error distinguishes the
+        // FR-AUTH-3/4, ADR-008, V-1, ADR-011. success:false + error distinguishes the
         // three rejection reasons so the client doesn't have to parse GraphQL error
         // strings (System Design §2.5 — the client must handle server rejection
-        // gracefully even after its own async availability check passed). Since v1.2
-        // this mutation is called only from Settings, as the recovery path for a
-        // member whose sign-up-time claim (post-confirmation) lost the race — not
-        // during sign-up itself. ALREADY_CLAIMED is what keeps it first-claim-only.
-        ClaimHandleResult: a.customType({
+        // gracefully even after its own live-availability check passed). As of v1.4
+        // this is the primary path again, called from the post-verification username
+        // screen (authenticated by then); Settings calls the same mutation as the
+        // recovery path for a member who verified but never finished that screen.
+        // ALREADY_CLAIMED is what keeps it first-claim-only.
+        ClaimUsernameResult: a.customType({
             success: a.boolean().required(),
-            handle: a.string(), // set only when success is true
+            username: a.string(), // set only when success is true
             error: a.enum(['INVALID_FORMAT', 'ALREADY_CLAIMED', 'ALREADY_TAKEN']),
         }),
-        claimHandle: a
+        claimUsername: a
             .mutation()
-            .arguments({ handle: a.string().required() })
-            .returns(a.ref('ClaimHandleResult'))
+            .arguments({ username: a.string().required() })
+            .returns(a.ref('ClaimUsernameResult'))
             .authorization((allow) => [allow.authenticated()])
-            .handler(a.handler.function(claimHandle)),
+            .handler(a.handler.function(claimUsername)),
 
         // membership (System Design §4.2, §4.4, §4.5, FR-MEM-1..9). All three mutations are
         // handled by the same Lambda, which writes Watchlist + WatchlistMember atomically via
         // DynamoDB TransactWriteItems — see membership/handler.ts for why. allow.authenticated()
         // here is a coarse gate only; the actual owner/self checks happen inside the handler
-        // against data it reads itself, matching claimHandle's pattern (NFR-SEC-1 — server-side
+        // against data it reads itself, matching claimUsername's pattern (NFR-SEC-1 — server-side
         // enforcement, not the mutation-level auth rule).
         AddMemberResult: a.customType({
             success: a.boolean().required(),
@@ -275,7 +277,7 @@ const schema = a
                 'NOT_FOUND',
                 'NOT_OWNER',
                 'INVALID_ROLE',
-                'HANDLE_NOT_FOUND',
+                'USERNAME_NOT_FOUND',
                 'ALREADY_MEMBER',
                 'MEMBER_CAP_REACHED',
                 'CONFLICT',
@@ -288,14 +290,14 @@ const schema = a
             error: a.enum(['NOT_FOUND', 'NOT_OWNER', 'NOT_A_MEMBER', 'CANNOT_REMOVE_OWNER', 'CONFLICT']),
         }),
 
-        // FR-MEM-1/3: Owner adds a collaborator by handle, assigning Editor or Viewer.
+        // FR-MEM-1/3: Owner adds a collaborator by username, assigning Editor or Viewer.
         addMember: a
             .mutation()
             .arguments({
                 watchlistId: a.string().required(),
-                handle: a.string().required(),
+                username: a.string().required(),
                 // Not .required() — a.enum() doesn't support the modifier (matches the
-                // ClaimHandleResult.error / WatchlistMember.role style elsewhere in this file).
+                // ClaimUsernameResult.error / WatchlistMember.role style elsewhere in this file).
                 // Handler validates presence at runtime instead.
                 role: a.enum(['EDITOR', 'VIEWER']),
             })
@@ -328,12 +330,12 @@ const schema = a
         // handler itself only ever calls UserProfile.create. When membershipFn
         // lands, its grant joins this same list.
         allow.resource(postConfirmation).to(['mutate']),
-        // claim-handle reads UserProfile (to reject an already-claimed member),
-        // creates Handle, and updates UserProfile.handle. Schema-level allow.resource()
+        // claim-username reads UserProfile (to reject an already-claimed member),
+        // creates Username, and updates UserProfile.username. Schema-level allow.resource()
         // operations are GraphQL-shaped ('query' | 'mutate' | 'listen'), not the
         // per-field CRUD vocabulary used inside a model's own .to() — 'query' covers
         // the UserProfile.get() read, same schema-wide-grant caveat as above.
-        allow.resource(claimHandle).to(['mutate', 'query']),
+        allow.resource(claimUsername).to(['mutate', 'query']),
     ]);
 
 export type Schema = ClientSchema<typeof schema>;

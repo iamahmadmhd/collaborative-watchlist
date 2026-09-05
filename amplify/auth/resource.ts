@@ -7,12 +7,10 @@ import { postConfirmation } from '../functions/post-confirmation/resource';
 // application never collects, displays, or calls it, which is what "no password"
 // means here (see ADR-010's rationale).
 //
-// custom:handle carries the handle chosen at sign-up through to postConfirmation,
-// which claims it atomically once the emailed code is verified (System Design
-// §4.2) — there is no authenticated session yet at signUp() time for a
-// client-authenticated claim call to be possible. Not required at the Cognito
-// level (custom attributes can't be) — postConfirmation treats a missing/invalid
-// value as "no handle claimed," recoverable later via claim-handle from Settings.
+// No custom:handle/custom:username attribute (ADR-011, v1.4 — removed, not renamed).
+// The username step now runs after postConfirmation, authenticated, via
+// claim-username (System Design §4.2) — there is no longer anything for a
+// signup-time Cognito attribute to carry.
 //
 // (System Design §4.3). Do not add allow.guest() anywhere; any operation reachable
 // without a user-pool token is a defect, asserted by V-10.
@@ -22,16 +20,8 @@ export const auth = defineAuth({
             otpLogin: true,
         },
     },
-    userAttributes: {
-        'custom:handle': {
-            dataType: 'String',
-            mutable: true,
-            minLen: 3,
-            maxLen: 20,
-        },
-    },
     triggers: {
-        postConfirmation, // creates the UserProfile record and claims custom:handle —
+        postConfirmation, // creates the UserProfile record —
         // Cognito can't be queried client-side, so display names would otherwise be
         // unavailable (FR-MEM-10, System Design §4.2).
     },

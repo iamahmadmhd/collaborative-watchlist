@@ -49,7 +49,7 @@ const docClient = DynamoDBDocumentClient.from(ddbClient);
 
 const WATCHLIST_TABLE = process.env.WATCHLIST_TABLE_NAME!;
 const WATCHLIST_MEMBER_TABLE = process.env.WATCHLIST_MEMBER_TABLE_NAME!;
-const HANDLE_TABLE = process.env.HANDLE_TABLE_NAME!;
+const USERNAME_TABLE = process.env.USERNAME_TABLE_NAME!;
 
 // FR-MEM-7: 20 members per watchlist, including the Owner. Enforced as a
 // pre-check (below) rather than a DynamoDB-side condition — see the file
@@ -81,17 +81,19 @@ function conditionalCheckFailedAt(err: unknown, index: number): boolean {
 }
 
 async function addMember(args: AddMemberArgs, callerId: string): Promise<AddMemberResult> {
-    const handle = args.handle.trim().toLowerCase();
+    const username = args.username.trim().toLowerCase();
     const role = args.role;
     if (role !== 'EDITOR' && role !== 'VIEWER') {
         return { success: false, error: 'INVALID_ROLE' };
     }
 
-    const { Item: handleRecord } = await docClient.send(new GetCommand({ TableName: HANDLE_TABLE, Key: { handle } }));
-    if (!handleRecord) {
-        return { success: false, error: 'HANDLE_NOT_FOUND' };
+    const { Item: usernameRecord } = await docClient.send(
+        new GetCommand({ TableName: USERNAME_TABLE, Key: { username } }),
+    );
+    if (!usernameRecord) {
+        return { success: false, error: 'USERNAME_NOT_FOUND' };
     }
-    const targetUserId = handleRecord.userId as string;
+    const targetUserId = usernameRecord.userId as string;
 
     const watchlist = await getWatchlist(args.watchlistId);
     if (!watchlist) {
@@ -142,7 +144,7 @@ async function addMember(args: AddMemberArgs, callerId: string): Promise<AddMemb
                                 role,
                                 joinedAt: new Date().toISOString(),
                             },
-                            // Composite-key uniqueness, same idiom as Handle.create() (ADR-008):
+                            // Composite-key uniqueness, same idiom as Username.create() (ADR-008):
                             // a concurrent duplicate add fails here, not with a check-then-write race.
                             ConditionExpression: 'attribute_not_exists(watchlistId)',
                         },

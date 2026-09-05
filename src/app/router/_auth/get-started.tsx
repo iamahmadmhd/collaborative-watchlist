@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
-import { SignUpPage } from '../../../pages/auth/sign-up';
+import { SignUpPage } from '../../../pages/auth/get-started';
 
 // The sole auth entry point (System Design §2.5, ADR-010 — no separate /sign-in
 // route). `redirect`: the path a not-yet-built route guard will one day attach so
@@ -11,7 +11,7 @@ const searchSchema = z.object({
     redirect: z.string().optional(),
 });
 
-export const Route = createFileRoute('/_auth/sign-up')({
+export const Route = createFileRoute('/_auth/get-started')({
     validateSearch: searchSchema,
     component: RouteComponent,
 });

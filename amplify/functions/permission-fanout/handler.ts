@@ -1,6 +1,12 @@
 import type { DynamoDBBatchResponse, DynamoDBRecord, DynamoDBStreamHandler } from 'aws-lambda';
 import { ConditionalCheckFailedException, DynamoDBClient, type AttributeValue } from '@aws-sdk/client-dynamodb';
-import { BatchWriteCommand, DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import {
+    BatchWriteCommand,
+    DynamoDBDocumentClient,
+    PutCommand,
+    QueryCommand,
+    UpdateCommand,
+} from '@aws-sdk/lib-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 
 // permission-fanout — System Design §4.5, §5.4, ADR-001
@@ -24,7 +30,23 @@ import { unmarshall } from '@aws-sdk/util-dynamodb';
 //    read-modify-write race; MODIFY events (reorder, watched-toggle) don't touch
 //    count and are ignored.
 //
-// Both are driven by the same event.Records loop below, routed by which table's
+// 3. Owner membership creation (§5.1, FR-LIST-1/5). WatchlistItem CRUD aside,
+//    §4.1 states list CRUD runs on Amplify's generated resolver — so a plain
+//    Watchlist.create() is the entire creation path — but WatchlistMember has
+//    no user-facing write grant at all (data/resource.ts): only membership/
+//    handler.ts can write it, and that function only ever handles add/remove/
+//    leave, never initial creation. Without a WatchlistMember(OWNER) row,
+//    access pattern #3 (§5.2, the byUser index this project's /lists screen
+//    reads) would never surface a member's own brand-new list back to them.
+//    This stream's INSERT handler is that missing write. A dedicated
+//    createWatchlist Lambda mirroring membership's TransactWriteItems would
+//    remove the eventual-consistency window this introduces, but at the cost
+//    of a sixth function contradicting §4.1's stated restraint — this stream
+//    is already paying for itself on every Watchlist write, so one more Put
+//    here is the smaller addition, consistent with the eventually-consistent
+//    posture NFR-SEC-4 and itemCount already accept elsewhere in this file.
+//
+// All three are driven by the same event.Records loop below, routed by which table's
 // stream produced each record (via eventSourceARN). Sharing one function is
 // deliberate (§4.5) — one DLQ, one consistency story, not two.
 //
@@ -41,6 +63,7 @@ const docClient = DynamoDBDocumentClient.from(ddbClient);
 
 const WATCHLIST_TABLE = process.env.WATCHLIST_TABLE_NAME!;
 const WATCHLIST_ITEM_TABLE = process.env.WATCHLIST_ITEM_TABLE_NAME!;
+const WATCHLIST_MEMBER_TABLE = process.env.WATCHLIST_MEMBER_TABLE_NAME!;
 
 const BATCH_WRITE_CHUNK_SIZE = 25; // DynamoDB's hard per-call limit (§4.5)
 const MAX_BATCH_WRITE_RETRIES = 5;
@@ -126,8 +149,12 @@ async function batchPutItems(items: readonly Record<string, unknown>[]): Promise
 // after creation (before any membership change) legitimately has no editors/
 // viewers attribute at all — `?? []` treats that as empty rather than throwing.
 async function handleWatchlistRecord(record: DynamoDBRecord): Promise<void> {
+    if (record.eventName === 'INSERT') {
+        await createOwnerMembership(record);
+        return;
+    }
     if (record.eventName !== 'MODIFY') {
-        return; // INSERT: nothing to fan out to yet. REMOVE: cascading item deletion is a separate concern (FR-LIST-4), not this stream's job.
+        return; // REMOVE: cascading item deletion is a separate concern (FR-LIST-4), not this stream's job.
     }
     const oldImage = toRecord(record.dynamodb?.OldImage as Record<string, AttributeValue> | undefined);
     const newImage = toRecord(record.dynamodb?.NewImage as Record<string, AttributeValue> | undefined);
@@ -151,6 +178,53 @@ async function handleWatchlistRecord(record: DynamoDBRecord): Promise<void> {
     }
 
     await batchPutItems(items.map((item) => ({ ...item, editors: newEditors, viewers: newViewers })));
+}
+
+// §5.1, FR-LIST-1/5 (see the file header's point 3). One Put, not a transaction:
+// the Watchlist row this reacts to is already durably written by the time the
+// stream delivers it, so there is nothing to roll back if this fails other than
+// retrying the same idempotent write. attribute_not_exists(watchlistId) — same
+// idiom membership/handler.ts uses for its own WatchlistMember.Put — makes a
+// redelivered INSERT record a no-op instead of clobbering joinedAt.
+//
+// createdAt/updatedAt are set explicitly, not left to Amplify Data's usual
+// auto-population — that only happens inside the generated resolver, which this
+// raw DynamoDB Put bypasses entirely. Amplify's generated schema marks both
+// non-null, so an item missing them isn't "created without a timestamp" from
+// AppSync's perspective — the whole item resolves to null on read (GraphQL
+// null-propagation bubbling a missing non-null field up to its nearest nullable
+// ancestor, the list entry itself), which is exactly what broke useWatchlists()
+// the first time a real Watchlist.create() exercised this path end-to-end.
+async function createOwnerMembership(record: DynamoDBRecord): Promise<void> {
+    const newImage = toRecord(record.dynamodb?.NewImage as Record<string, AttributeValue> | undefined);
+    const watchlistId = newImage?.id as string | undefined;
+    const ownerId = newImage?.ownerId as string | undefined;
+    if (!watchlistId || !ownerId) {
+        return;
+    }
+
+    try {
+        const now = new Date().toISOString();
+        await docClient.send(
+            new PutCommand({
+                TableName: WATCHLIST_MEMBER_TABLE,
+                Item: {
+                    watchlistId,
+                    userId: ownerId,
+                    role: 'OWNER',
+                    joinedAt: now,
+                    createdAt: now,
+                    updatedAt: now,
+                },
+                ConditionExpression: 'attribute_not_exists(watchlistId)',
+            }),
+        );
+    } catch (err) {
+        if (err instanceof ConditionalCheckFailedException) {
+            return; // already created — a redelivered INSERT record
+        }
+        throw err;
+    }
 }
 
 // §5.4: INSERT -> +1, REMOVE -> -1, MODIFY -> no-op (reorder/watched-toggle don't

@@ -160,12 +160,18 @@ permissionFanoutLambda.addToRolePolicy(
 );
 
 // Data-plane permissions: fan-out re-queries and rewrites WatchlistItem; itemCount
-// maintenance only ever updates Watchlist. No read access to Watchlist is needed —
-// old/new images arrive on the stream event itself.
+// maintenance only ever updates Watchlist. Owner-membership creation (handler.ts's
+// createOwnerMembership, §5.1) additionally needs a Put on WatchlistMember. No read
+// access to Watchlist is needed — old/new images arrive on the stream event itself.
 watchlistItemTable.grant(permissionFanoutLambda, 'dynamodb:Query', 'dynamodb:BatchWriteItem');
 watchlistTable.grant(permissionFanoutLambda, 'dynamodb:UpdateItem');
+watchlistMemberTable.grant(permissionFanoutLambda, 'dynamodb:PutItem');
 
 (permissionFanoutLambda as lambda.Function).addEnvironment('WATCHLIST_TABLE_NAME', watchlistTable.tableName);
 (permissionFanoutLambda as lambda.Function).addEnvironment('WATCHLIST_ITEM_TABLE_NAME', watchlistItemTable.tableName);
+(permissionFanoutLambda as lambda.Function).addEnvironment(
+    'WATCHLIST_MEMBER_TABLE_NAME',
+    watchlistMemberTable.tableName,
+);
 
 export default backend;

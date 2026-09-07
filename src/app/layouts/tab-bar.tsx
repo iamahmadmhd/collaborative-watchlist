@@ -5,9 +5,9 @@ export type TabSection = 'Discover' | 'Saved' | 'Watchlists' | 'You';
 const TABS: { label: string; section: TabSection; to?: string }[] = [
     { label: 'DISCOVER', section: 'Discover', to: '/discover' },
     { label: 'SAVED', section: 'Saved', to: '/saved' },
-    // Watchlists/You have no page yet (build order steps 5/-) — see
-    // shell-sidebar.tsx's matching note. Not `<Link>`s until they exist.
-    { label: 'LISTS', section: 'Watchlists' },
+    { label: 'LISTS', section: 'Watchlists', to: '/lists' },
+    // You (Settings) has no page yet — see shell-sidebar.tsx's matching note.
+    // Not a `<Link>` until it exists.
     { label: 'YOU', section: 'You' },
 ];
 

@@ -1,22 +1,20 @@
 import { Link } from '@tanstack/react-router';
 import { useCurrentUser } from '../../entities/member/api/use-current-user';
 import { useSavedSet } from '../../features/save-movie/api/saved-movies';
+import { useWatchlists } from '../../entities/watchlist/api/use-watchlists';
 import { memberColor, memberInitial } from '../../entities/member/model/member-color';
 
 export type ShellSection = 'Discover' | 'Saved' | 'Watchlists';
 
 // docs/design/Shell Sidebar.dc.html, desktop nav rail (System Design nav:
 // "left sidebar rail with the list of watchlists always visible"). Watchlists
-// is rendered as a non-interactive row, not a `<Link>`, until that page exists
-// (build order step 5) — a typed route to a page that isn't built yet either
-// fails to compile or 404s at runtime; neither is better than an inert row for
-// now. Its count is omitted rather than showing the board's hardcoded "4" with
-// nothing behind it. Saved now links to its real page (FR-SAVE-3); its count
-// was already real (features/save-movie).
+// now links to its real page (FR-LIST-5) with a real count (entities/watchlist).
 //
-// "YOUR LISTS" (docs/design) is left out entirely rather than than rendered
-// with invented empty-state copy — there is no watchlist entity yet to be
-// honest about. Reinstate it when watchlists land (build order step 5).
+// "YOUR LISTS" (docs/design) — the per-list mini-rows below the main nav — stays
+// left out. Its rows need a real per-list destination (/lists/$watchlistId,
+// watchlist-detail) and per-list collaborator stripes (member data this screen
+// doesn't cheaply have, same reasoning pages/watchlists/watchlists-page.tsx's own
+// row gives for skipping avatars). Reinstate it once watchlist-detail lands.
 
 function NavRow({
     label,
@@ -51,6 +49,7 @@ function NavRow({
 export function ShellSidebar({ active, className }: { active: ShellSection; className?: string }) {
     const { data: user } = useCurrentUser();
     const { data: savedSet } = useSavedSet();
+    const { data: watchlists } = useWatchlists();
 
     return (
         <aside
@@ -63,7 +62,7 @@ export function ShellSidebar({ active, className }: { active: ShellSection; clas
             <nav className='flex flex-col gap-0.5 px-3'>
                 <NavRow label='Discover' active={active === 'Discover'} to='/discover' />
                 <NavRow label='Saved' count={savedSet?.size} active={active === 'Saved'} to='/saved' />
-                <NavRow label='Watchlists' active={active === 'Watchlists'} />
+                <NavRow label='Watchlists' count={watchlists?.length} active={active === 'Watchlists'} to='/lists' />
             </nav>
             <div className='border-border mt-auto flex items-center gap-2.5 border-t px-5 pt-3.5'>
                 <div

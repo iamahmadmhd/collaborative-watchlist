@@ -114,6 +114,7 @@ async function addMember(args: AddMemberArgs, callerId: string): Promise<AddMemb
 
     const newEditors = role === 'EDITOR' ? [...editors, targetUserId] : editors;
     const newViewers = role === 'VIEWER' ? [...viewers, targetUserId] : viewers;
+    const now = new Date().toISOString();
 
     try {
         await docClient.send(
@@ -138,11 +139,21 @@ async function addMember(args: AddMemberArgs, callerId: string): Promise<AddMemb
                     {
                         Put: {
                             TableName: WATCHLIST_MEMBER_TABLE,
+                            // createdAt/updatedAt set explicitly — this TransactWriteItems call
+                            // bypasses the generated resolver that would normally populate them,
+                            // and Amplify's generated schema marks both non-null. Leaving them
+                            // absent doesn't just omit a nicety: AppSync nulls the whole item on
+                            // read (GraphQL null-propagation from a missing non-null field), which
+                            // is exactly what broke useWatchlists() the first time a raw-SDK
+                            // WatchlistMember write (permission-fanout's own, same fix) was read
+                            // back through the generated client — see that function's handler.ts.
                             Item: {
                                 watchlistId: args.watchlistId,
                                 userId: targetUserId,
                                 role,
-                                joinedAt: new Date().toISOString(),
+                                joinedAt: now,
+                                createdAt: now,
+                                updatedAt: now,
                             },
                             // Composite-key uniqueness, same idiom as Username.create() (ADR-008):
                             // a concurrent duplicate add fails here, not with a check-then-write race.

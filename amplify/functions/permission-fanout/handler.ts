@@ -172,12 +172,25 @@ async function handleWatchlistRecord(record: DynamoDBRecord): Promise<void> {
     }
 
     const watchlistId = newImage.id as string;
+    const ownerId = newImage.ownerId as string;
     const items = await queryAllItems(watchlistId);
     if (items.length === 0) {
         return;
     }
 
-    await batchPutItems(items.map((item) => ({ ...item, editors: newEditors, viewers: newViewers })));
+    // WatchlistItem's own authorization (data/resource.ts) is
+    // allow.ownersDefinedIn('editors') for full CRUD — there is no separate
+    // allow.owner() rule on this model, because WatchlistItem has no field
+    // holding a single owner the way Watchlist has ownerId. The Owner's item
+    // access therefore depends entirely on being present in *this* array, even
+    // though Watchlist.editors itself (addMember, membership/handler.ts) only
+    // ever holds EDITOR-role userIds, never the Owner's. Fan-out has to inject
+    // ownerId here, on every propagation, or the Owner silently loses read/write
+    // on every item the moment any membership change fires this stream (FR-ITEM-1
+    // requires the Owner be able to add/remove items always, not just before the
+    // first collaborator joins).
+    const itemEditors = [ownerId, ...newEditors];
+    await batchPutItems(items.map((item) => ({ ...item, editors: itemEditors, viewers: newViewers })));
 }
 
 // §5.1, FR-LIST-1/5 (see the file header's point 3). One Put, not a transaction:

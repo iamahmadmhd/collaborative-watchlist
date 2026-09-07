@@ -3,14 +3,15 @@ import { HATCH_STYLE } from '../../entities/movie/ui/movie-card';
 import { posterUrl, releaseYearOf, type CastMember } from '../../entities/movie/model/movie';
 import { useSavedSet } from '../../features/save-movie/api/saved-movies';
 import { SaveButton } from '../../features/save-movie/ui/save-button';
+import { AddToListMenu } from '../../features/manage-list-items/ui/add-to-list-menu';
 import { ArrowLeftIcon } from '@heroicons/react/24/solid';
 
-// docs/design/Movie Detail.dc.html. Three things the mock shows that this page
-// deliberately doesn't reproduce, none backed by an FR or by data this app
-// actually has:
-// - "IN 2 OF YOUR LISTS" and "Add to watchlist ▼": both need a Watchlists
-//   feature that doesn't exist yet (build order — same reasoning as
-//   shell-sidebar.tsx's inert nav rows).
+// docs/design/Movie Detail.dc.html. Two things the mock shows that this page
+// deliberately doesn't reproduce, neither backed by data this app actually has:
+// - "IN 2 OF YOUR LISTS": would need a per-list membership count summarised
+//   across every list this member belongs to, which isn't a documented access
+//   pattern (System Design §5.2) — AddToListMenu's own checkboxes already show
+//   this per-list on demand, which is what FR-ITEM-1 actually asks for.
 // - The meta line's country/language/rating (HONG KONG · CANTONESE · 7.9/10):
 //   `MovieDetail` (amplify/data/resource.ts) carries none of these — TMDB's
 //   raw response isn't proxied through, tmdb-schemas.ts only maps the fields
@@ -113,6 +114,7 @@ function MovieDetailContent({
                     <aside className='flex flex-col gap-3.5'>
                         <Poster poster={poster} className='aspect-2/3' />
                         <SaveButton movie={movieSummary} isSaved={isSaved} />
+                        <AddToListMenu movie={movieSummary} />
                     </aside>
                     <div className='flex min-w-0 flex-col gap-5'>
                         <MovieHeading movie={movie} releaseDate={releaseDate} titleClassName='text-[36px]' />
@@ -153,8 +155,9 @@ function MovieDetailContent({
                     )}
                 </div>
             </div>
-            <div className='pt-4'>
+            <div className='flex flex-col gap-2.5 pt-4'>
                 <SaveButton movie={movieSummary} isSaved={isSaved} />
+                <AddToListMenu movie={movieSummary} />
             </div>
             {movie.overview && (
                 <p className='font-body text-text pt-4 text-[15px] leading-relaxed text-pretty'>{movie.overview}</p>

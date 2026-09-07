@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import { useWatchlists, type MyWatchlist } from '../../entities/watchlist/api/use-watchlists';
 import { RoleBadge } from '../../entities/watchlist/ui/role-badge';
 import { CreateWatchlistDialog } from '../../features/create-watchlist/ui/create-watchlist-dialog';
@@ -96,9 +97,15 @@ function WatchlistsList({ watchlistsQuery }: { watchlistsQuery: ReturnType<typeo
     );
 }
 
+// FR-LIST-5's row is now the entry point into /lists/:id (watchlist-detail-page.tsx)
+// — the only reachable path there besides typing the URL directly.
 function WatchlistRow({ watchlist }: { watchlist: MyWatchlist }) {
     return (
-        <div className='border-border bg-raised flex flex-col gap-3 rounded-sm border p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4.5'>
+        <Link
+            to='/lists/$watchlistId'
+            params={{ watchlistId: watchlist.id }}
+            className='border-border bg-raised hover:border-accent flex flex-col gap-3 rounded-sm border p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4.5'
+        >
             <div className='flex min-w-0 flex-1 flex-col gap-1.5'>
                 <div className='flex items-center gap-2.5'>
                     <span className='font-display text-text truncate text-[17px] font-semibold tracking-[-0.015em] lg:text-[19px]'>
@@ -116,6 +123,6 @@ function WatchlistRow({ watchlist }: { watchlist: MyWatchlist }) {
                 </span>
                 {watchlist.updatedAt && <span>{formatRelativeTime(watchlist.updatedAt)}</span>}
             </div>
-        </div>
+        </Link>
     );
 }

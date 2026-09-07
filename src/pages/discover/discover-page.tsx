@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { useDiscoverMovies } from '../../entities/movie/api/use-discover-movies';
 import type { MovieSummary } from '../../entities/movie/model/movie';
 import { useGenres } from '../../entities/movie/api/use-genres';
@@ -9,12 +11,11 @@ import { ChevronLeftIcon, ChevronRightIcon, MagnifyingGlassIcon } from '@heroico
 
 // docs/design/Discovery.dc.html. The header search box is presentational in
 // the mock itself (a styled div, not an input, even there) — it's the entry
-// point into the dedicated Search screen (docs' "02 Search"), not inline live
-// search; it stays inert until that page exists (build order). Same reasoning
-// for the mock's "2020s" decade pill: no FR backs a decade filter and
-// `discoverMovies` takes no such argument (amplify/data/resource.ts) — CLAUDE.md
-// says stop and ask rather than invent one, so it's left out rather than
-// shipped as a control that does nothing.
+// point into the dedicated Search screen (docs' "02 Search", pages/search/search-page.tsx),
+// not inline live search. Same reasoning for the mock's "2020s" decade pill: no
+// FR backs a decade filter and `discoverMovies` takes no such argument
+// (amplify/data/resource.ts) — CLAUDE.md says stop and ask rather than invent
+// one, so it's left out rather than shipped as a control that does nothing.
 export function DiscoverPage({
     genreId,
     page,
@@ -29,22 +30,45 @@ export function DiscoverPage({
     const moviesQuery = useDiscoverMovies({ genreId, page });
     const { data: genres } = useGenres();
     const { data: savedSet } = useSavedSet();
+    const navigate = useNavigate();
 
     const activeGenreName = genreId !== undefined ? genres?.find((g) => g.id === genreId)?.name : undefined;
     const heading = activeGenreName ? activeGenreName : 'Trending this week';
+
+    // The "/" hint next to the search box (docs/design/Discovery.dc.html) is a
+    // real shortcut, not decoration — skipped while any control on the page
+    // already has focus so it doesn't hijack typing into the genre Select.
+    useEffect(() => {
+        function handleKeyDown(event: KeyboardEvent) {
+            const target = event.target as HTMLElement | null;
+            const isTyping =
+                target instanceof HTMLElement &&
+                (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+            if (event.key === '/' && !isTyping && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                event.preventDefault();
+                void navigate({ to: '/search', search: { q: '', page: 1 } });
+            }
+        }
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [navigate]);
 
     return (
         <>
             {/* Desktop */}
             <div className='hidden min-h-0 min-w-0 flex-1 flex-col lg:flex'>
                 <header className='border-border bg-raised flex flex-none items-center gap-3 border-b px-7 py-4'>
-                    <div className='border-border bg-surface text-muted flex h-9.5 flex-1 items-center gap-2.5 rounded-[3px] border px-3 text-sm'>
+                    <Link
+                        to='/search'
+                        search={{ q: '', page: 1 }}
+                        className='border-border bg-surface text-muted flex h-9.5 flex-1 items-center gap-2.5 rounded-[3px] border px-3 text-sm'
+                    >
                         <MagnifyingGlassIcon className='size-4' />
                         <span>Search films by title</span>
                         <span className='border-border ml-auto rounded-xs border px-1.25 py-0.5 font-mono text-[10px]'>
                             /
                         </span>
-                    </div>
+                    </Link>
                     <GenreFilter genreId={genreId} onChange={onGenreChange} />
                 </header>
 
@@ -71,10 +95,14 @@ export function DiscoverPage({
                             Repertory
                         </span>
                     </div>
-                    <div className='border-border bg-surface text-muted flex h-9 items-center gap-2.25 rounded-[3px] border px-2.75 text-sm'>
+                    <Link
+                        to='/search'
+                        search={{ q: '', page: 1 }}
+                        className='border-border bg-surface text-muted flex h-9 items-center gap-2.25 rounded-[3px] border px-2.75 text-sm'
+                    >
                         <span className='border-muted h-2.75 w-2.75 rounded-full border-[1.5px]' />
                         <span>Search films</span>
-                    </div>
+                    </Link>
                     <div className='mt-1'>
                         <GenreFilter genreId={genreId} onChange={onGenreChange} />
                     </div>

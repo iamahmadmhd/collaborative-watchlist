@@ -13,6 +13,7 @@ import { Route as AppRouteRouteImport } from './app/router/_app/route'
 import { Route as AuthRouteRouteImport } from './app/router/_auth/route'
 import { Route as AppIndexRouteImport } from './app/router/_app/index'
 import { Route as AppDiscoverRouteImport } from './app/router/_app/discover'
+import { Route as AppSearchRouteImport } from './app/router/_app/search'
 import { Route as AuthGetStartedRouteImport } from './app/router/_auth/get-started'
 import { Route as AuthSetUsernameRouteImport } from './app/router/_auth/set-username'
 import { Route as AuthVerifyRouteImport } from './app/router/_auth/verify'
@@ -35,6 +36,11 @@ const AppDiscoverRoute = AppDiscoverRouteImport.update({
   path: '/discover',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppSearchRoute = AppSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AuthGetStartedRoute = AuthGetStartedRouteImport.update({
   id: '/get-started',
   path: '/get-started',
@@ -54,6 +60,7 @@ const AuthVerifyRoute = AuthVerifyRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/discover': typeof AppDiscoverRoute
+  '/search': typeof AppSearchRoute
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
@@ -61,6 +68,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/discover': typeof AppDiscoverRoute
+  '/search': typeof AppSearchRoute
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
@@ -70,6 +78,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteRouteWithChildren
   '/_auth': typeof AuthRouteRouteWithChildren
   '/_app/discover': typeof AppDiscoverRoute
+  '/_app/search': typeof AppSearchRoute
   '/_auth/get-started': typeof AuthGetStartedRoute
   '/_auth/set-username': typeof AuthSetUsernameRoute
   '/_auth/verify': typeof AuthVerifyRoute
@@ -77,14 +86,17 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/discover' | '/get-started' | '/set-username' | '/verify'
+  fullPaths:
+    '/' | '/discover' | '/search' | '/get-started' | '/set-username' | '/verify'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/discover' | '/get-started' | '/set-username' | '/verify'
+  to:
+    '/' | '/discover' | '/search' | '/get-started' | '/set-username' | '/verify'
   id:
     | '__root__'
     | '/_app'
     | '/_auth'
     | '/_app/discover'
+    | '/_app/search'
     | '/_auth/get-started'
     | '/_auth/set-username'
     | '/_auth/verify'
@@ -126,6 +138,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDiscoverRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/search': {
+      id: '/_app/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof AppSearchRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_auth/get-started': {
       id: '/_auth/get-started'
       path: '/get-started'
@@ -152,11 +171,13 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteRouteChildren {
   AppDiscoverRoute: typeof AppDiscoverRoute
+  AppSearchRoute: typeof AppSearchRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppDiscoverRoute: AppDiscoverRoute,
+  AppSearchRoute: AppSearchRoute,
   AppIndexRoute: AppIndexRoute,
 }
 

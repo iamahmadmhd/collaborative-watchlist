@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { MagnifyingGlassIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
 import { useSearchMovies } from '../../entities/movie/api/use-search-movies';
 import { posterUrl, type MovieSummary } from '../../entities/movie/model/movie';
@@ -15,11 +15,10 @@ const SEARCH_DEBOUNCE_MS = 300;
 //   dropped "2020s" pill, no FR backs genre-filtered search and there's no
 //   argument to invent one against.
 // - The suggestions dropdown and each result's "blurb"/genre columns: both need
-//   data `MovieSummary` doesn't carry (no synopsis/genre fields — only
-//   tmdbId/title/posterPath/releaseYear, entities/movie/model/movie.ts) or a
-//   destination that doesn't exist yet (a suggestion's natural target is Movie
-//   Detail, which isn't built — build order, same logic as shell-sidebar.tsx's
-//   inert nav rows).
+//   data `MovieSummary` doesn't carry — no synopsis/genre fields, only
+//   tmdbId/title/posterPath/releaseYear (entities/movie/model/movie.ts). Movie
+//   Detail exists now, so each row does link there; a separate typeahead
+//   endpoint would still be new backend scope no FR asks for.
 export function SearchPage({
     query,
     page,
@@ -328,13 +327,21 @@ function SearchResultRow({
 
     return (
         <div className={`border-border flex items-center gap-4 border-b py-2.75 ${rowClassName}`}>
-            <div className='border-border bg-raised h-16.5 w-11 flex-none overflow-hidden border'>
-                {poster && <img src={poster} alt='' className='h-full w-full object-cover' loading='lazy' />}
-            </div>
-            <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
-                <span className='text-text truncate text-[15px] font-semibold'>{movie.title}</span>
-                <span className='text-muted font-mono text-xs'>{movie.releaseYear ?? '—'}</span>
-            </div>
+            {/* FR-DISC-4's entry point from Search — same reasoning as movie-card.tsx:
+                SaveToggleButton stays outside the Link, not nested inside it. */}
+            <Link
+                to='/movie/$movieId'
+                params={{ movieId: movie.tmdbId }}
+                className='flex min-w-0 flex-1 items-center gap-4'
+            >
+                <div className='border-border bg-raised h-16.5 w-11 flex-none overflow-hidden border'>
+                    {poster && <img src={poster} alt='' className='h-full w-full object-cover' loading='lazy' />}
+                </div>
+                <div className='flex min-w-0 flex-1 flex-col gap-0.5'>
+                    <span className='text-text truncate text-[15px] font-semibold'>{movie.title}</span>
+                    <span className='text-muted font-mono text-xs'>{movie.releaseYear ?? '—'}</span>
+                </div>
+            </Link>
             <SaveToggleButton movie={movie} isSaved={isSaved} />
         </div>
     );

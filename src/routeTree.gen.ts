@@ -17,6 +17,7 @@ import { Route as AppSearchRouteImport } from './app/router/_app/search'
 import { Route as AuthGetStartedRouteImport } from './app/router/_auth/get-started'
 import { Route as AuthSetUsernameRouteImport } from './app/router/_auth/set-username'
 import { Route as AuthVerifyRouteImport } from './app/router/_auth/verify'
+import { Route as AppMovieMovieIdRouteImport } from './app/router/_app/movie/$movieId'
 
 const AppRouteRoute = AppRouteRouteImport.update({
   id: '/_app',
@@ -56,6 +57,11 @@ const AuthVerifyRoute = AuthVerifyRouteImport.update({
   path: '/verify',
   getParentRoute: () => AuthRouteRoute,
 } as any)
+const AppMovieMovieIdRoute = AppMovieMovieIdRouteImport.update({
+  id: '/movie/$movieId',
+  path: '/movie/$movieId',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -64,6 +70,7 @@ export interface FileRoutesByFullPath {
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
+  '/movie/$movieId': typeof AppMovieMovieIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
@@ -72,6 +79,7 @@ export interface FileRoutesByTo {
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
+  '/movie/$movieId': typeof AppMovieMovieIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -83,14 +91,27 @@ export interface FileRoutesById {
   '/_auth/set-username': typeof AuthSetUsernameRoute
   '/_auth/verify': typeof AuthVerifyRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/movie/$movieId': typeof AppMovieMovieIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/discover' | '/search' | '/get-started' | '/set-username' | '/verify'
+    | '/'
+    | '/discover'
+    | '/search'
+    | '/get-started'
+    | '/set-username'
+    | '/verify'
+    | '/movie/$movieId'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/' | '/discover' | '/search' | '/get-started' | '/set-username' | '/verify'
+    | '/'
+    | '/discover'
+    | '/search'
+    | '/get-started'
+    | '/set-username'
+    | '/verify'
+    | '/movie/$movieId'
   id:
     | '__root__'
     | '/_app'
@@ -101,6 +122,7 @@ export interface FileRouteTypes {
     | '/_auth/set-username'
     | '/_auth/verify'
     | '/_app/'
+    | '/_app/movie/$movieId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -166,6 +188,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthVerifyRouteImport
       parentRoute: typeof AuthRouteRoute
     }
+    '/_app/movie/$movieId': {
+      id: '/_app/movie/$movieId'
+      path: '/movie/$movieId'
+      fullPath: '/movie/$movieId'
+      preLoaderRoute: typeof AppMovieMovieIdRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
   }
 }
 
@@ -173,12 +202,14 @@ interface AppRouteRouteChildren {
   AppDiscoverRoute: typeof AppDiscoverRoute
   AppSearchRoute: typeof AppSearchRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppMovieMovieIdRoute: typeof AppMovieMovieIdRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppDiscoverRoute: AppDiscoverRoute,
   AppSearchRoute: AppSearchRoute,
   AppIndexRoute: AppIndexRoute,
+  AppMovieMovieIdRoute: AppMovieMovieIdRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

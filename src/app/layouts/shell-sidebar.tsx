@@ -6,13 +6,13 @@ import { memberColor, memberInitial } from '../../entities/member/model/member-c
 export type ShellSection = 'Discover' | 'Saved' | 'Watchlists';
 
 // docs/design/Shell Sidebar.dc.html, desktop nav rail (System Design nav:
-// "left sidebar rail with the list of watchlists always visible"). Saved and
-// Watchlists are rendered as non-interactive rows, not `<Link>`s, until those
-// pages exist (build order steps 4/5) — a typed route to a page that isn't
-// built yet either fails to compile or 404s at runtime; neither is better than
-// an inert row for now. Their counts follow the same rule: Saved's is real
-// (features/save-movie already exists), Watchlists' is omitted rather than
-// showing the board's hardcoded "4" with nothing behind it.
+// "left sidebar rail with the list of watchlists always visible"). Watchlists
+// is rendered as a non-interactive row, not a `<Link>`, until that page exists
+// (build order step 5) — a typed route to a page that isn't built yet either
+// fails to compile or 404s at runtime; neither is better than an inert row for
+// now. Its count is omitted rather than showing the board's hardcoded "4" with
+// nothing behind it. Saved now links to its real page (FR-SAVE-3); its count
+// was already real (features/save-movie).
 //
 // "YOUR LISTS" (docs/design) is left out entirely rather than than rendered
 // with invented empty-state copy — there is no watchlist entity yet to be
@@ -62,7 +62,7 @@ export function ShellSidebar({ active, className }: { active: ShellSection; clas
             </div>
             <nav className='flex flex-col gap-0.5 px-3'>
                 <NavRow label='Discover' active={active === 'Discover'} to='/discover' />
-                <NavRow label='Saved' count={savedSet?.size} active={active === 'Saved'} />
+                <NavRow label='Saved' count={savedSet?.size} active={active === 'Saved'} to='/saved' />
                 <NavRow label='Watchlists' active={active === 'Watchlists'} />
             </nav>
             <div className='border-border mt-auto flex items-center gap-2.5 border-t px-5 pt-3.5'>

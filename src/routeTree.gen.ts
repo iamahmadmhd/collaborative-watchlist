@@ -13,6 +13,7 @@ import { Route as AppRouteRouteImport } from './app/router/_app/route'
 import { Route as AuthRouteRouteImport } from './app/router/_auth/route'
 import { Route as AppIndexRouteImport } from './app/router/_app/index'
 import { Route as AppDiscoverRouteImport } from './app/router/_app/discover'
+import { Route as AppSavedRouteImport } from './app/router/_app/saved'
 import { Route as AppSearchRouteImport } from './app/router/_app/search'
 import { Route as AuthGetStartedRouteImport } from './app/router/_auth/get-started'
 import { Route as AuthSetUsernameRouteImport } from './app/router/_auth/set-username'
@@ -35,6 +36,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppDiscoverRoute = AppDiscoverRouteImport.update({
   id: '/discover',
   path: '/discover',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppSavedRoute = AppSavedRouteImport.update({
+  id: '/saved',
+  path: '/saved',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppSearchRoute = AppSearchRouteImport.update({
@@ -66,6 +72,7 @@ const AppMovieMovieIdRoute = AppMovieMovieIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/discover': typeof AppDiscoverRoute
+  '/saved': typeof AppSavedRoute
   '/search': typeof AppSearchRoute
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/discover': typeof AppDiscoverRoute
+  '/saved': typeof AppSavedRoute
   '/search': typeof AppSearchRoute
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteRouteWithChildren
   '/_auth': typeof AuthRouteRouteWithChildren
   '/_app/discover': typeof AppDiscoverRoute
+  '/_app/saved': typeof AppSavedRoute
   '/_app/search': typeof AppSearchRoute
   '/_auth/get-started': typeof AuthGetStartedRoute
   '/_auth/set-username': typeof AuthSetUsernameRoute
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/discover'
+    | '/saved'
     | '/search'
     | '/get-started'
     | '/set-username'
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/discover'
+    | '/saved'
     | '/search'
     | '/get-started'
     | '/set-username'
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/_auth'
     | '/_app/discover'
+    | '/_app/saved'
     | '/_app/search'
     | '/_auth/get-started'
     | '/_auth/set-username'
@@ -160,6 +172,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDiscoverRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/saved': {
+      id: '/_app/saved'
+      path: '/saved'
+      fullPath: '/saved'
+      preLoaderRoute: typeof AppSavedRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/search': {
       id: '/_app/search'
       path: '/search'
@@ -200,6 +219,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteRouteChildren {
   AppDiscoverRoute: typeof AppDiscoverRoute
+  AppSavedRoute: typeof AppSavedRoute
   AppSearchRoute: typeof AppSearchRoute
   AppIndexRoute: typeof AppIndexRoute
   AppMovieMovieIdRoute: typeof AppMovieMovieIdRoute
@@ -207,6 +227,7 @@ interface AppRouteRouteChildren {
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppDiscoverRoute: AppDiscoverRoute,
+  AppSavedRoute: AppSavedRoute,
   AppSearchRoute: AppSearchRoute,
   AppIndexRoute: AppIndexRoute,
   AppMovieMovieIdRoute: AppMovieMovieIdRoute,

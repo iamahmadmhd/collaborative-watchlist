@@ -4,10 +4,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useNavigate } from '@tanstack/react-router';
 import { getCurrentUser } from 'aws-amplify/auth';
-import { generateClient } from 'aws-amplify/api';
-import type { Schema } from '../../../amplify/data/resource';
 import { TextField } from '../../shared/ui/text-field';
 import { Button } from '../../shared/ui/button';
+import { client } from '../../shared/lib/amplify-client';
 import { AuthPageShell } from './auth-page-shell';
 import { authErrorMessage } from './auth-error-message';
 
@@ -35,8 +34,6 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
-
-const client = generateClient<Schema>();
 
 // redirect?: string | undefined — see the matching note in sign-up.tsx.
 export function UsernamePage({ redirect }: { redirect?: string | undefined }) {

@@ -9,20 +9,31 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './app/router/__root'
-import { Route as IndexRouteImport } from './app/router/index'
+import { Route as AppRouteRouteImport } from './app/router/_app/route'
 import { Route as AuthRouteRouteImport } from './app/router/_auth/route'
+import { Route as AppIndexRouteImport } from './app/router/_app/index'
+import { Route as AppDiscoverRouteImport } from './app/router/_app/discover'
 import { Route as AuthGetStartedRouteImport } from './app/router/_auth/get-started'
 import { Route as AuthSetUsernameRouteImport } from './app/router/_auth/set-username'
 import { Route as AuthVerifyRouteImport } from './app/router/_auth/verify'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AppRouteRoute = AppRouteRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRouteRoute = AuthRouteRouteImport.update({
   id: '/_auth',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppDiscoverRoute = AppDiscoverRouteImport.update({
+  id: '/discover',
+  path: '/discover',
+  getParentRoute: () => AppRouteRoute,
 } as any)
 const AuthGetStartedRoute = AuthGetStartedRouteImport.update({
   id: '/get-started',
@@ -41,51 +52,57 @@ const AuthVerifyRoute = AuthVerifyRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
+  '/discover': typeof AppDiscoverRoute
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
+  '/discover': typeof AppDiscoverRoute
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_app': typeof AppRouteRouteWithChildren
   '/_auth': typeof AuthRouteRouteWithChildren
+  '/_app/discover': typeof AppDiscoverRoute
   '/_auth/get-started': typeof AuthGetStartedRoute
   '/_auth/set-username': typeof AuthSetUsernameRoute
   '/_auth/verify': typeof AuthVerifyRoute
+  '/_app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/get-started' | '/set-username' | '/verify'
+  fullPaths: '/' | '/discover' | '/get-started' | '/set-username' | '/verify'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/get-started' | '/set-username' | '/verify'
+  to: '/' | '/discover' | '/get-started' | '/set-username' | '/verify'
   id:
     | '__root__'
-    | '/'
+    | '/_app'
     | '/_auth'
+    | '/_app/discover'
     | '/_auth/get-started'
     | '/_auth/set-username'
     | '/_auth/verify'
+    | '/_app/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AppRouteRoute: typeof AppRouteRouteWithChildren
   AuthRouteRoute: typeof AuthRouteRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+      preLoaderRoute: typeof AppRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_auth': {
@@ -94,6 +111,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AuthRouteRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/discover': {
+      id: '/_app/discover'
+      path: '/discover'
+      fullPath: '/discover'
+      preLoaderRoute: typeof AppDiscoverRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/_auth/get-started': {
       id: '/_auth/get-started'
@@ -119,6 +150,20 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AppRouteRouteChildren {
+  AppDiscoverRoute: typeof AppDiscoverRoute
+  AppIndexRoute: typeof AppIndexRoute
+}
+
+const AppRouteRouteChildren: AppRouteRouteChildren = {
+  AppDiscoverRoute: AppDiscoverRoute,
+  AppIndexRoute: AppIndexRoute,
+}
+
+const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
+  AppRouteRouteChildren,
+)
+
 interface AuthRouteRouteChildren {
   AuthGetStartedRoute: typeof AuthGetStartedRoute
   AuthSetUsernameRoute: typeof AuthSetUsernameRoute
@@ -136,7 +181,7 @@ const AuthRouteRouteWithChildren = AuthRouteRoute._addFileChildren(
 )
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AppRouteRoute: AppRouteRouteWithChildren,
   AuthRouteRoute: AuthRouteRouteWithChildren,
 }
 export const routeTree = rootRouteImport

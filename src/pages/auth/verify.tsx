@@ -9,10 +9,14 @@ import { Button } from '../../shared/ui/button';
 import { AuthPageShell } from './auth-page-shell';
 import { authErrorMessage } from './auth-error-message';
 
-// FR-AUTH-1/2, ADR-011 (v1.4). One screen, two entry points, both landing on
-// "enter the 6-digit code" — sign-up confirmation and sign-in confirmation are
-// different Cognito operations (confirmSignUp vs confirmSignIn) but the same UX,
-// so `mode` picks the call rather than duplicating this screen.
+// FR-AUTH-1/2, ADR-011 (v1.4). One screen, two entry points — sign-up confirmation
+// and sign-in confirmation are different Cognito operations (confirmSignUp vs
+// confirmSignIn) but the same UX, so `mode` picks the call rather than duplicating
+// this screen. The two operations don't share a code length, though: confirmSignUp's
+// code (Cognito's classic email-verification code) is 6 digits, while confirmSignIn's
+// EMAIL_OTP challenge (the passwordless sign-in flow, ADR-010) sends 8 — confirmed
+// against Cognito's actual behavior, not a UI choice, so `mode` drives `CODE_LENGTH`
+// the same way it drives which confirm* call runs below.
 //
 // signup: confirmSignUp() marks the account confirmed (does NOT establish a
 // session on its own) — autoSignIn() was requested at signUp() time (sign-up.tsx)
@@ -24,11 +28,19 @@ import { authErrorMessage } from './auth-error-message';
 // returning member goes straight in — they already have a username from a prior
 // signup pass through /username (or, rarely, still needs one via Settings — the
 // abandoned-flow edge case documented in System Design §9 #6, not solved here).
-const schema = z.object({
-    code: z.string().length(6, 'Enter the 6-digit code'),
-});
+const CODE_LENGTH: Record<'signup' | 'signin', number> = {
+    signup: 6,
+    signin: 8,
+};
 
-type FormValues = z.infer<typeof schema>;
+function createSchema(mode: 'signup' | 'signin') {
+    const length = CODE_LENGTH[mode];
+    return z.object({
+        code: z.string().length(length, `Enter the ${length}-digit code`),
+    });
+}
+
+type FormValues = { code: string };
 
 const RESEND_COOLDOWN_SECONDS = 30;
 // Client-side attempt counter for the "N tries left" hint only — presentational,
@@ -53,6 +65,7 @@ export function VerifyPage({
     redirect?: string | undefined;
 }) {
     const navigate = useNavigate();
+    const codeLength = CODE_LENGTH[mode];
     const [isResending, setIsResending] = useState(false);
     const [resendCooldown, setResendCooldown] = useState(RESEND_COOLDOWN_SECONDS);
     const [failedAttempts, setFailedAttempts] = useState(0);
@@ -61,7 +74,7 @@ export function VerifyPage({
         handleSubmit,
         setError,
         formState: { errors, isSubmitting },
-    } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { code: '' } });
+    } = useForm<FormValues>({ resolver: zodResolver(createSchema(mode)), defaultValues: { code: '' } });
 
     useEffect(() => {
         if (resendCooldown <= 0) return;
@@ -135,7 +148,7 @@ export function VerifyPage({
             }
         >
             <form onSubmit={onSubmit} noValidate className='flex flex-col gap-4'>
-                <OtpField control={control} name='code' label='Verification code' length={6} />
+                <OtpField control={control} name='code' label='Verification code' length={codeLength} />
                 {errors.root?.message && (
                     <div className='border-danger bg-danger/10 flex items-center gap-2.5 rounded-[3px] border px-3.5 py-2.5'>
                         <div className='bg-danger h-7.5 w-1' />

@@ -86,7 +86,7 @@ export function SignUpPage({ redirect }: { redirect?: string | undefined }) {
     });
 
     return (
-        <AuthPageShell title='Get started' subtitle="We'll send you a six-digit code.">
+        <AuthPageShell title='Get started' subtitle="We'll send you a verification code.">
             <form onSubmit={onSubmit} noValidate className='flex flex-col gap-4'>
                 <TextField
                     label='Email'

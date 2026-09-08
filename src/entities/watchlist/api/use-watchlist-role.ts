@@ -11,9 +11,16 @@ import type { WatchlistRole } from '../model/watchlist';
 // reject the underlying mutations regardless of what this hook returns
 // (NFR-SEC-1). `null` covers both "not yet loaded" and "not a member of this
 // list" — callers that need to tell those apart use `.isPending` alongside it.
+// Exported so features/manage-members can invalidate this exact cache entry once a
+// member leaves — the same sharing pattern watchlistQueryKey/watchlistItemsQueryKey/
+// watchlistMembersQueryKey already use with their own feature callers.
+export function watchlistRoleQueryKey(watchlistId: string) {
+    return ['watchlist-role', watchlistId];
+}
+
 export function useWatchlistRole(watchlistId: string) {
     return useQuery({
-        queryKey: ['watchlist-role', watchlistId],
+        queryKey: watchlistRoleQueryKey(watchlistId),
         queryFn: async (): Promise<WatchlistRole | null> => {
             const { userId } = await getCurrentUser();
             const { data } = await client.models.WatchlistMember.get({ watchlistId, userId });

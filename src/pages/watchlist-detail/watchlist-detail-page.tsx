@@ -1,20 +1,18 @@
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeftIcon, TrashIcon } from '@heroicons/react/24/solid';
 import { useWatchlist } from '../../entities/watchlist/api/use-watchlist';
 import { useWatchlistRole } from '../../entities/watchlist/api/use-watchlist-role';
-import {
-    useWatchlistMembers,
-    type WatchlistMemberWithProfile,
-} from '../../entities/watchlist/api/use-watchlist-members';
+import { useWatchlistMembers } from '../../entities/watchlist/api/use-watchlist-members';
 import { useWatchlistItems } from '../../entities/watchlist/api/watchlist-items';
 import { canEditWatchlist } from '../../entities/watchlist/model/watchlist';
 import type { WatchlistItemRecord, WatchlistRecord } from '../../entities/watchlist/model/watchlist';
 import { RoleBadge } from '../../entities/watchlist/ui/role-badge';
-import { memberColor, memberInitial } from '../../entities/member/model/member-color';
+import { memberColor } from '../../entities/member/model/member-color';
 import { posterUrl } from '../../entities/movie/model/movie';
 import { HATCH_STYLE } from '../../entities/movie/ui/movie-card';
 import { formatRelativeTime } from '../../shared/lib/format-relative-time';
 import { useRemoveListItem } from '../../features/manage-list-items/api/manage-list-items';
+import { ManageMembersSection } from '../../features/manage-members/ui/manage-members-section';
 
 // docs/design has no Watchlist Detail mock (only README.md — see docs/design/
 // and CLAUDE.md's design-reference note); this follows the same fallback
@@ -23,14 +21,14 @@ import { useRemoveListItem } from '../../features/manage-list-items/api/manage-l
 // this codebase already settled on (desktop/mobile split, skeleton/empty/error
 // states), rather than inventing screen composition from nothing.
 //
-// FR-LIST-2/3 (rename/re-describe) and the manage-members feature (add/remove
-// a collaborator by @username) are deliberately not built here — both are
-// separate FSD feature slices from manage-list-items (System Design §2.2's
-// module structure lists them apart), out of scope for "list detail and add
-// to list". Members render read-only. FR-ITEM-5 (drag reorder, dnd-kit,
-// "Should") is likewise deferred — this only appends (ADR-006's rankAfter),
-// it never reorders.
+// FR-LIST-2/3 (rename/re-describe) is still deliberately not built here — a
+// separate FSD feature slice from both manage-list-items and manage-members
+// (System Design §2.2's module structure lists it apart), out of scope for
+// this screen so far. FR-ITEM-5 (drag reorder, dnd-kit, "Should") is likewise
+// deferred — this only appends (ADR-006's rankAfter), it never reorders.
+// Membership (FR-MEM-1..10) is now live via ManageMembersSection below.
 export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
+    const navigate = useNavigate();
     const watchlistQuery = useWatchlist(watchlistId);
     const roleQuery = useWatchlistRole(watchlistId);
     const membersQuery = useWatchlistMembers(watchlistId);
@@ -38,6 +36,13 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
 
     function handleBack() {
         window.history.back();
+    }
+
+    // FR-MEM-5: once a member leaves, this screen no longer resolves for them
+    // (Watchlist's authorization has no rule matching a non-member) — navigate
+    // away rather than let the next refetch render the "doesn't exist" error path.
+    function handleLeft() {
+        void navigate({ to: '/lists' });
     }
 
     if (watchlistQuery.isPending) {
@@ -66,7 +71,12 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                 <DetailHeader onBack={handleBack} />
                 <div className='min-h-0 flex-1 overflow-y-auto px-7 py-5.5'>
                     <ListHeading watchlist={watchlist} role={roleQuery.data} itemCount={itemsQuery.data?.length} />
-                    <MembersRow membersQuery={membersQuery} className='mt-4' />
+                    <ManageMembersSection
+                        watchlistId={watchlistId}
+                        role={roleQuery.data}
+                        onLeft={handleLeft}
+                        className='mt-4'
+                    />
                     <ItemsSection
                         itemsQuery={itemsQuery}
                         canEdit={canEdit}
@@ -82,7 +92,12 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                 <MobileHeader onBack={handleBack} />
                 <div className='min-h-0 flex-1 overflow-y-auto p-4'>
                     <ListHeading watchlist={watchlist} role={roleQuery.data} itemCount={itemsQuery.data?.length} />
-                    <MembersRow membersQuery={membersQuery} className='mt-3' />
+                    <ManageMembersSection
+                        watchlistId={watchlistId}
+                        role={roleQuery.data}
+                        onLeft={handleLeft}
+                        className='mt-3'
+                    />
                     <ItemsSection
                         itemsQuery={itemsQuery}
                         canEdit={canEdit}
@@ -146,42 +161,6 @@ function ListHeading({
             <span className='text-muted font-mono text-[11px]'>
                 {count} item{count === 1 ? '' : 's'}
             </span>
-        </div>
-    );
-}
-
-function MembersRow({
-    membersQuery,
-    className,
-}: {
-    membersQuery: ReturnType<typeof useWatchlistMembers>;
-    className?: string;
-}) {
-    if (membersQuery.isPending || membersQuery.isError || membersQuery.data.length === 0) {
-        return null;
-    }
-
-    return (
-        <div className={`flex flex-wrap items-center gap-2 ${className ?? ''}`}>
-            {membersQuery.data.map((member) => (
-                <MemberBadge key={member.userId} member={member} />
-            ))}
-        </div>
-    );
-}
-
-function MemberBadge({ member }: { member: WatchlistMemberWithProfile }) {
-    const label = member.displayName ?? (member.username ? `@${member.username}` : 'Member');
-
-    return (
-        <div className='border-border bg-raised flex items-center gap-1.5 rounded-full border py-1 pr-2.5 pl-1'>
-            <div
-                className='text-raised flex size-5 flex-none items-center justify-center rounded-full text-[10px] font-bold'
-                style={{ background: memberColor(member.userId) }}
-            >
-                {memberInitial(label)}
-            </div>
-            <span className='text-text text-xs font-medium'>{label}</span>
         </div>
     );
 }

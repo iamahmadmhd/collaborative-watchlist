@@ -61,6 +61,8 @@ type AddMemberResult = Schema['addMember']['returnType'];
 type RemoveMemberArgs = Schema['removeMember']['args'];
 type LeaveWatchlistArgs = Schema['leaveWatchlist']['args'];
 type MembershipResult = Schema['removeMember']['returnType'];
+type ChangeRoleArgs = Schema['changeMemberRole']['args'];
+type ChangeRoleResult = Schema['changeMemberRole']['returnType'];
 
 interface WatchlistRecord {
     ownerId: string;
@@ -251,26 +253,123 @@ async function removeFromWatchlist(
     return { success: true, error: null };
 }
 
+// FR-MEM-3's "change it afterwards" clause. Mirrors addMember/removeFromWatchlist's
+// shape exactly: read the Watchlist, assert caller===ownerId, move the target between
+// the editors/viewers arrays under the same list-equality optimistic lock, and update
+// WatchlistMember.role in the same transaction so the membership record and the
+// permission arrays never observably disagree (FR-MEM-8). permission-fanout's own
+// Watchlist-stream handler already diffs old/new editors/viewers unconditionally
+// (handler.ts there), so a role swap fans out to WatchlistItem exactly like an
+// add/remove would — nothing about that consumer needed to change.
+async function changeMemberRole(args: ChangeRoleArgs, callerId: string): Promise<ChangeRoleResult> {
+    const role = args.role;
+    if (role !== 'EDITOR' && role !== 'VIEWER') {
+        return { success: false, error: 'INVALID_ROLE' };
+    }
+
+    const watchlist = await getWatchlist(args.watchlistId);
+    if (!watchlist) {
+        return { success: false, error: 'NOT_FOUND' };
+    }
+    if (watchlist.ownerId !== callerId) {
+        return { success: false, error: 'NOT_OWNER' };
+    }
+    // FR-MEM-6: the Owner's own role is fixed — nothing to reassign it to.
+    if (args.userId === watchlist.ownerId) {
+        return { success: false, error: 'CANNOT_CHANGE_OWNER' };
+    }
+
+    const editors = watchlist.editors ?? [];
+    const viewers = watchlist.viewers ?? [];
+    if (!editors.includes(args.userId) && !viewers.includes(args.userId)) {
+        return { success: false, error: 'NOT_A_MEMBER' };
+    }
+
+    const withoutTarget = {
+        editors: editors.filter((id) => id !== args.userId),
+        viewers: viewers.filter((id) => id !== args.userId),
+    };
+    const newEditors = role === 'EDITOR' ? [...withoutTarget.editors, args.userId] : withoutTarget.editors;
+    const newViewers = role === 'VIEWER' ? [...withoutTarget.viewers, args.userId] : withoutTarget.viewers;
+    const now = new Date().toISOString();
+
+    try {
+        await docClient.send(
+            new TransactWriteCommand({
+                TransactItems: [
+                    {
+                        Update: {
+                            TableName: WATCHLIST_TABLE,
+                            Key: { id: args.watchlistId },
+                            UpdateExpression: 'SET editors = :newEditors, viewers = :newViewers',
+                            ConditionExpression:
+                                'ownerId = :callerId AND (attribute_not_exists(editors) OR editors = :oldEditors) AND (attribute_not_exists(viewers) OR viewers = :oldViewers)',
+                            ExpressionAttributeValues: {
+                                ':newEditors': newEditors,
+                                ':newViewers': newViewers,
+                                ':callerId': callerId,
+                                ':oldEditors': editors,
+                                ':oldViewers': viewers,
+                            },
+                        },
+                    },
+                    {
+                        Update: {
+                            TableName: WATCHLIST_MEMBER_TABLE,
+                            Key: { watchlistId: args.watchlistId, userId: args.userId },
+                            UpdateExpression: 'SET #role = :role, updatedAt = :updatedAt',
+                            ConditionExpression: 'attribute_exists(watchlistId)',
+                            ExpressionAttributeNames: { '#role': 'role' },
+                            ExpressionAttributeValues: { ':role': role, ':updatedAt': now },
+                        },
+                    },
+                ],
+            }),
+        );
+    } catch (err) {
+        if (conditionalCheckFailedAt(err, 1)) {
+            return { success: false, error: 'NOT_A_MEMBER' };
+        }
+        if (conditionalCheckFailedAt(err, 0)) {
+            return { success: false, error: 'CONFLICT' };
+        }
+        throw err;
+    }
+
+    return { success: true, error: null };
+}
+
+// Dispatch is by argument shape, not event.info.fieldName. tmdb-proxy's handler.ts
+// uses the textbook Amplify Gen2 multi-op pattern (switch on event.info.fieldName)
+// and it works there — but for THIS function, in a real deployment, event.info comes
+// back undefined while event.identity/event.arguments are present (confirmed via
+// CloudWatch: "Cannot read properties of undefined (reading 'fieldName')" at that
+// switch, with the crash happening after event.identity was already read
+// successfully on the line above it). The one structural difference between the two
+// functions is this one's `resourceGroupName: 'data'` override (resource.ts) — needed
+// to avoid a CloudFormation circular dependency between the data stack and this
+// function's stack — which appears to also change how AppSync's generated resolver
+// invokes it. That's Amplify's internal resolver codegen, not something fixable from
+// here, so dispatch falls back to the arguments' own shape instead: the four
+// operations' argument sets are mutually distinguishable by construction (only
+// addMember carries `username`; only removeMember/changeMemberRole carry `userId`,
+// and only the latter also carries `role`; leaveWatchlist carries neither).
 export const handler: AppSyncResolverHandler<Record<string, unknown>, unknown> = async (event) => {
     const callerId = (event.identity as AppSyncIdentityCognito).sub;
+    const args = event.arguments as Record<string, unknown>;
 
-    switch (event.info.fieldName) {
-        case 'addMember':
-            return addMember(event.arguments as AddMemberArgs, callerId);
-
-        case 'removeMember': {
-            const args = event.arguments as RemoveMemberArgs;
-            // FR-MEM-4: only the Owner may remove another member.
-            return removeFromWatchlist(args.watchlistId, args.userId, callerId, true);
-        }
-
-        case 'leaveWatchlist': {
-            const args = event.arguments as LeaveWatchlistArgs;
-            // FR-MEM-5: any collaborator may remove themselves — no Owner-caller check.
-            return removeFromWatchlist(args.watchlistId, callerId, callerId, false);
-        }
-
-        default:
-            throw new Error(`membership: unhandled field "${event.info.fieldName}"`);
+    if (typeof args.username === 'string') {
+        return addMember(args as AddMemberArgs, callerId);
     }
+
+    if (typeof args.userId === 'string') {
+        if ('role' in args) {
+            return changeMemberRole(args as ChangeRoleArgs, callerId);
+        }
+        // FR-MEM-4: only the Owner may remove another member.
+        return removeFromWatchlist((args as RemoveMemberArgs).watchlistId, args.userId, callerId, true);
+    }
+
+    // FR-MEM-5: any collaborator may remove themselves — no Owner-caller check.
+    return removeFromWatchlist((args as LeaveWatchlistArgs).watchlistId, callerId, callerId, false);
 };

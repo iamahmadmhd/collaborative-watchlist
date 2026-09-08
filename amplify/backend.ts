@@ -51,17 +51,30 @@ tmdbCacheTable.grantReadWriteData(backend.tmdbProxy.resources.lambda);
 //
 // grantReadWriteData() is deliberately not used: it does not include
 // dynamodb:TransactWriteItems, which is IAM's distinct action for that API call even
-// though the transaction performs Put/Update/Delete under the hood. Each grant below
-// is scoped to exactly what the handler calls — GetItem for its pre-transaction reads,
-// TransactWriteItems for the atomic write, nothing else.
+// though the transaction performs Put/Update/Delete under the hood. TransactWriteItems
+// is also not sufficient BY ITSELF — DynamoDB's IAM authorization for a transaction
+// checks the specific per-item action (PutItem/UpdateItem/DeleteItem) of every item in
+// it, in addition to TransactWriteItems on the call as a whole (confirmed the hard way:
+// AccessDeniedException on dynamodb:UpdateItem with only TransactWriteItems granted).
+// Each grant below is scoped to exactly what the handler's transactions use —
+// GetItem for its pre-transaction reads, then one grant per Watchlist/WatchlistMember
+// item-action addMember/removeFromWatchlist/changeMemberRole actually performs
+// (handler.ts: Watchlist.Update everywhere; WatchlistMember.Put on add, .Delete on
+// remove/leave, .Update on a role change) — plus TransactWriteItems itself.
 const watchlistTable = backend.data.resources.tables.Watchlist;
 const watchlistMemberTable = backend.data.resources.tables.WatchlistMember;
 const watchlistItemTable = backend.data.resources.tables.WatchlistItem;
 const usernameTable = backend.data.resources.tables.Username;
 const membershipLambda = backend.membership.resources.lambda;
 
-watchlistTable.grant(membershipLambda, 'dynamodb:GetItem', 'dynamodb:TransactWriteItems');
-watchlistMemberTable.grant(membershipLambda, 'dynamodb:TransactWriteItems');
+watchlistTable.grant(membershipLambda, 'dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:TransactWriteItems');
+watchlistMemberTable.grant(
+    membershipLambda,
+    'dynamodb:PutItem',
+    'dynamodb:UpdateItem',
+    'dynamodb:DeleteItem',
+    'dynamodb:TransactWriteItems',
+);
 usernameTable.grant(membershipLambda, 'dynamodb:GetItem');
 
 (membershipLambda as lambda.Function).addEnvironment('WATCHLIST_TABLE_NAME', watchlistTable.tableName);

@@ -320,6 +320,31 @@ const schema = a
             .returns(a.ref('MembershipResult'))
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(membership)),
+
+        // FR-MEM-3's second clause ("and shall be able to change it afterwards"). Same
+        // Lambda, same transactional editors/viewers <-> WatchlistMember.role pattern as
+        // addMember/removeMember — see membership/handler.ts's changeMemberRole.
+        ChangeRoleResult: a.customType({
+            success: a.boolean().required(),
+            error: a.enum([
+                'NOT_FOUND',
+                'NOT_OWNER',
+                'INVALID_ROLE',
+                'NOT_A_MEMBER',
+                'CANNOT_CHANGE_OWNER',
+                'CONFLICT',
+            ]),
+        }),
+        changeMemberRole: a
+            .mutation()
+            .arguments({
+                watchlistId: a.string().required(),
+                userId: a.string().required(),
+                role: a.enum(['EDITOR', 'VIEWER']),
+            })
+            .returns(a.ref('ChangeRoleResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(membership)),
     })
     .authorization((allow) => [
         // allow.resource(fn) is only available at schema level in the installed

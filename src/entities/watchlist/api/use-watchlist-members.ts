@@ -9,6 +9,13 @@ export interface WatchlistMemberWithProfile {
     username: string | null;
 }
 
+// Exported so features/manage-members can invalidate/patch this exact cache entry
+// after add/remove/change-role, the same way watchlistQueryKey and
+// watchlistItemsQueryKey are already shared with their own feature callers.
+export function watchlistMembersQueryKey(watchlistId: string) {
+    return ['watchlist-members', watchlistId];
+}
+
 // System Design §5.2 access pattern 6: WatchlistMember's composite key
 // (watchlistId, userId) makes this a plain PK query, not a scan. WatchlistMember
 // itself carries no display fields (§5.1), so each row's UserProfile is fetched
@@ -19,7 +26,7 @@ export interface WatchlistMemberWithProfile {
 // a collaborator list needs.
 export function useWatchlistMembers(watchlistId: string) {
     return useQuery({
-        queryKey: ['watchlist-members', watchlistId],
+        queryKey: watchlistMembersQueryKey(watchlistId),
         queryFn: async (): Promise<WatchlistMemberWithProfile[]> => {
             const { data: members } = await client.models.WatchlistMember.list({ watchlistId });
 

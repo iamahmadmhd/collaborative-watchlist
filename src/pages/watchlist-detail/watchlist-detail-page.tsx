@@ -13,6 +13,8 @@ import { HATCH_STYLE } from '../../entities/movie/ui/movie-card';
 import { formatRelativeTime } from '../../shared/lib/format-relative-time';
 import { useRemoveListItem } from '../../features/manage-list-items/api/manage-list-items';
 import { ManageMembersSection } from '../../features/manage-members/ui/manage-members-section';
+import { useWatchedSet } from '../../features/toggle-watched/api/watch-status';
+import { WatchedToggleButton } from '../../features/toggle-watched/ui/watched-toggle-button';
 
 // docs/design has no Watchlist Detail mock (only README.md — see docs/design/
 // and CLAUDE.md's design-reference note); this follows the same fallback
@@ -27,12 +29,15 @@ import { ManageMembersSection } from '../../features/manage-members/ui/manage-me
 // this screen so far. FR-ITEM-5 (drag reorder, dnd-kit, "Should") is likewise
 // deferred — this only appends (ADR-006's rankAfter), it never reorders.
 // Membership (FR-MEM-1..10) is now live via ManageMembersSection below.
+// Watched tracking (FR-WATCH-1..4) is now live via WatchedToggleButton and
+// ListHeading's progress line below.
 export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
     const navigate = useNavigate();
     const watchlistQuery = useWatchlist(watchlistId);
     const roleQuery = useWatchlistRole(watchlistId);
     const membersQuery = useWatchlistMembers(watchlistId);
     const itemsQuery = useWatchlistItems(watchlistId);
+    const watchedQuery = useWatchedSet(watchlistId);
 
     function handleBack() {
         window.history.back();
@@ -70,7 +75,12 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
             <div className='hidden min-h-0 min-w-0 flex-1 flex-col lg:flex'>
                 <DetailHeader onBack={handleBack} />
                 <div className='min-h-0 flex-1 overflow-y-auto px-7 py-5.5'>
-                    <ListHeading watchlist={watchlist} role={roleQuery.data} itemCount={itemsQuery.data?.length} />
+                    <ListHeading
+                        watchlist={watchlist}
+                        role={roleQuery.data}
+                        itemCount={itemsQuery.data?.length}
+                        watchedCount={watchedQuery.data?.size}
+                    />
                     <ManageMembersSection
                         watchlistId={watchlistId}
                         role={roleQuery.data}
@@ -81,6 +91,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                         itemsQuery={itemsQuery}
                         canEdit={canEdit}
                         memberLabels={memberLabels}
+                        watchedSet={watchedQuery.data}
                         watchlistId={watchlistId}
                         className='mt-6'
                     />
@@ -91,7 +102,12 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
             <div className='flex min-h-0 flex-1 flex-col lg:hidden'>
                 <MobileHeader onBack={handleBack} />
                 <div className='min-h-0 flex-1 overflow-y-auto p-4'>
-                    <ListHeading watchlist={watchlist} role={roleQuery.data} itemCount={itemsQuery.data?.length} />
+                    <ListHeading
+                        watchlist={watchlist}
+                        role={roleQuery.data}
+                        itemCount={itemsQuery.data?.length}
+                        watchedCount={watchedQuery.data?.size}
+                    />
                     <ManageMembersSection
                         watchlistId={watchlistId}
                         role={roleQuery.data}
@@ -102,6 +118,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                         itemsQuery={itemsQuery}
                         canEdit={canEdit}
                         memberLabels={memberLabels}
+                        watchedSet={watchedQuery.data}
                         watchlistId={watchlistId}
                         className='mt-4'
                     />
@@ -139,10 +156,12 @@ function ListHeading({
     watchlist,
     role,
     itemCount,
+    watchedCount,
 }: {
     watchlist: Pick<WatchlistRecord, 'name' | 'description' | 'itemCount'>;
     role: string | null | undefined;
     itemCount: number | undefined;
+    watchedCount: number | undefined;
 }) {
     // itemCount comes from the FR-LIST-6 stream-maintained counter (Watchlist.itemCount)
     // until the real-time item list resolves, then switches to the actual length — the
@@ -160,6 +179,15 @@ function ListHeading({
             {watchlist.description && <p className='text-muted font-body max-w-160 text-sm'>{watchlist.description}</p>}
             <span className='text-muted font-mono text-[11px]'>
                 {count} item{count === 1 ? '' : 's'}
+                {/* FR-WATCH-4: this member's own watched progress, e.g. "4 of 12
+                    watched" — undefined (not 0) while useWatchedSet is still
+                    loading, so this doesn't flash "0 watched" on every open. */}
+                {watchedCount !== undefined && itemCount !== undefined && (
+                    <>
+                        {' '}
+                        · {watchedCount} of {itemCount} watched
+                    </>
+                )}
             </span>
         </div>
     );
@@ -169,12 +197,14 @@ function ItemsSection({
     itemsQuery,
     canEdit,
     memberLabels,
+    watchedSet,
     watchlistId,
     className,
 }: {
     itemsQuery: ReturnType<typeof useWatchlistItems>;
     canEdit: boolean;
     memberLabels: Map<string, string>;
+    watchedSet: Set<string> | undefined;
     watchlistId: string;
     className?: string;
 }) {
@@ -225,6 +255,7 @@ function ItemsSection({
                     item={item}
                     canEdit={canEdit}
                     addedByLabel={memberLabels.get(item.addedBy) ?? 'A member'}
+                    isWatched={watchedSet?.has(item.tmdbId) ?? false}
                     watchlistId={watchlistId}
                 />
             ))}
@@ -236,11 +267,13 @@ function ItemRow({
     item,
     canEdit,
     addedByLabel,
+    isWatched,
     watchlistId,
 }: {
     item: WatchlistItemRecord;
     canEdit: boolean;
     addedByLabel: string;
+    isWatched: boolean;
     watchlistId: string;
 }) {
     const removeItem = useRemoveListItem(watchlistId);
@@ -259,13 +292,26 @@ function ItemRow({
                 {poster && <img src={poster} alt='' className='h-full w-full object-cover' loading='lazy' />}
             </div>
             <div className='flex min-w-0 flex-1 flex-col gap-0.5 py-2'>
-                <span className='text-text truncate text-[14px] font-semibold'>{item.title}</span>
+                <Link
+                    to='/movie/$movieId'
+                    params={{ movieId: item.tmdbId }}
+                    className='text-text truncate text-[14px] font-semibold'
+                >
+                    {item.title}
+                </Link>
                 <span className='text-muted font-mono text-[11px]'>{item.releaseYear ?? '—'}</span>
                 <span className='text-muted text-xs'>
                     Added by {addedByLabel}
                     {item.addedAt && <> · {formatRelativeTime(item.addedAt)}</>}
                 </span>
             </div>
+            <WatchedToggleButton
+                watchlistId={watchlistId}
+                tmdbId={item.tmdbId}
+                title={item.title}
+                isWatched={isWatched}
+                className={canEdit ? undefined : 'mr-3.5'}
+            />
             {canEdit && (
                 <button
                     type='button'

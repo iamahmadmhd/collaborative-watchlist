@@ -35,42 +35,50 @@ function toPositivePage(page: number | null | undefined): number {
     return page && page > 0 ? Math.floor(page) : 1;
 }
 
+// Dispatch is by argument shape, not event.info.fieldName — confirmed via
+// CloudWatch in a real deployment: "Cannot read properties of undefined
+// (reading 'fieldName')" at that switch, event.info itself being undefined.
+// This function's own header comment (previous revision) claimed this
+// "textbook Amplify Gen2 multi-op pattern" worked fine here and only
+// membership/handler.ts needed the argument-shape workaround, attributing
+// the difference to membership's `resourceGroupName: 'data'` override — that
+// theory is now disproven: this function hits the identical crash despite
+// having no such override, so event.info is unreliable for Lambda-backed
+// multi-operation custom queries in this deployment generally, not something
+// tied to one function's resource grouping. Falls back to the same
+// technique membership/handler.ts uses: the four queries' argument sets are
+// mutually distinguishable by construction (only getMovieDetails carries
+// `tmdbId`; only searchMovies carries `query`; discoverMovies always carries
+// `page`, per useDiscoverMovies always passing it; getGenres carries no
+// arguments at all — `.arguments({})` in the schema).
 export const handler: AppSyncResolverHandler<Record<string, unknown>, unknown> = async (event) => {
-    switch (event.info.fieldName) {
-        case 'getGenres':
-            return withCache(cacheKeys.genres(), CACHE_TTL_SECONDS.genres, () => tmdb.fetchGenres());
+    const args = (event.arguments ?? {}) as Record<string, unknown>;
 
-        case 'discoverMovies': {
-            const args = event.arguments as Schema['discoverMovies']['args'];
-            const page = toPositivePage(args.page);
-            const genreIds = (args.genreIds ?? []).filter((id): id is number => id != null);
-
-            if (genreIds.length === 0) {
-                // FR-DISC-1: no filter — trending/popular.
-                return withCache(cacheKeys.trending(page), CACHE_TTL_SECONDS.trending, () => tmdb.fetchTrending(page));
-            }
-            // FR-DISC-3: filtered by one or more genres.
-            return withCache(cacheKeys.discover(genreIds, page), CACHE_TTL_SECONDS.discover, () =>
-                tmdb.fetchDiscover(genreIds, page),
-            );
-        }
-
-        case 'searchMovies': {
-            const args = event.arguments as Schema['searchMovies']['args'];
-            const page = toPositivePage(args.page);
-            return withCache(cacheKeys.search(args.query, page), CACHE_TTL_SECONDS.search, () =>
-                tmdb.fetchSearch(args.query, page),
-            );
-        }
-
-        case 'getMovieDetails': {
-            const args = event.arguments as Schema['getMovieDetails']['args'];
-            return withCache(cacheKeys.movie(args.tmdbId), CACHE_TTL_SECONDS.movie, () =>
-                tmdb.fetchMovieDetail(args.tmdbId),
-            );
-        }
-
-        default:
-            throw new Error(`tmdb-proxy: unhandled field "${event.info.fieldName}"`);
+    if (typeof args.tmdbId === 'string') {
+        const tmdbId = args.tmdbId;
+        return withCache(cacheKeys.movie(tmdbId), CACHE_TTL_SECONDS.movie, () => tmdb.fetchMovieDetail(tmdbId));
     }
+
+    if (typeof args.query === 'string') {
+        const query = args.query;
+        const page = toPositivePage(args.page as number | null | undefined);
+        return withCache(cacheKeys.search(query, page), CACHE_TTL_SECONDS.search, () => tmdb.fetchSearch(query, page));
+    }
+
+    if ('page' in args || 'genreIds' in args) {
+        const typedArgs = args as Schema['discoverMovies']['args'];
+        const page = toPositivePage(typedArgs.page);
+        const genreIds = (typedArgs.genreIds ?? []).filter((id): id is number => id != null);
+
+        if (genreIds.length === 0) {
+            // FR-DISC-1: no filter — trending/popular.
+            return withCache(cacheKeys.trending(page), CACHE_TTL_SECONDS.trending, () => tmdb.fetchTrending(page));
+        }
+        // FR-DISC-3: filtered by one or more genres.
+        return withCache(cacheKeys.discover(genreIds, page), CACHE_TTL_SECONDS.discover, () =>
+            tmdb.fetchDiscover(genreIds, page),
+        );
+    }
+
+    return withCache(cacheKeys.genres(), CACHE_TTL_SECONDS.genres, () => tmdb.fetchGenres());
 };

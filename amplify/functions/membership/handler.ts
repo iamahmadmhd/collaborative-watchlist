@@ -339,21 +339,27 @@ async function changeMemberRole(args: ChangeRoleArgs, callerId: string): Promise
     return { success: true, error: null };
 }
 
-// Dispatch is by argument shape, not event.info.fieldName. tmdb-proxy's handler.ts
-// uses the textbook Amplify Gen2 multi-op pattern (switch on event.info.fieldName)
-// and it works there — but for THIS function, in a real deployment, event.info comes
-// back undefined while event.identity/event.arguments are present (confirmed via
-// CloudWatch: "Cannot read properties of undefined (reading 'fieldName')" at that
-// switch, with the crash happening after event.identity was already read
-// successfully on the line above it). The one structural difference between the two
-// functions is this one's `resourceGroupName: 'data'` override (resource.ts) — needed
-// to avoid a CloudFormation circular dependency between the data stack and this
-// function's stack — which appears to also change how AppSync's generated resolver
-// invokes it. That's Amplify's internal resolver codegen, not something fixable from
-// here, so dispatch falls back to the arguments' own shape instead: the four
-// operations' argument sets are mutually distinguishable by construction (only
-// addMember carries `username`; only removeMember/changeMemberRole carry `userId`,
-// and only the latter also carries `role`; leaveWatchlist carries neither).
+// Dispatch is by argument shape, not event.info.fieldName: in a real
+// deployment, event.info comes back undefined while event.identity/
+// event.arguments are present (confirmed via CloudWatch: "Cannot read
+// properties of undefined (reading 'fieldName')" at that switch, with the
+// crash happening after event.identity was already read successfully on the
+// line above it). A previous revision of this comment guessed the cause was
+// this function's `resourceGroupName: 'data'` override (resource.ts, needed
+// to avoid a CloudFormation circular dependency between the data stack and
+// this function's stack) supposedly changing how AppSync's generated
+// resolver invokes it — and that tmdb-proxy/handler.ts's identical
+// switch-on-event.info.fieldName pattern was fine without that override.
+// That guess is disproven: tmdb-proxy hits the identical crash despite
+// having no such override (see its own handler.ts), so event.info is
+// unreliable for Lambda-backed multi-operation custom queries/mutations in
+// this deployment generally, not something tied to one function's resource
+// grouping. Whatever the real cause is, it isn't fixable from here, so both
+// functions dispatch on the arguments' own shape instead: this function's
+// four operations' argument sets are mutually distinguishable by
+// construction (only addMember carries `username`; only removeMember/
+// changeMemberRole carry `userId`, and only the latter also carries `role`;
+// leaveWatchlist carries neither).
 export const handler: AppSyncResolverHandler<Record<string, unknown>, unknown> = async (event) => {
     const callerId = (event.identity as AppSyncIdentityCognito).sub;
     const args = event.arguments as Record<string, unknown>;

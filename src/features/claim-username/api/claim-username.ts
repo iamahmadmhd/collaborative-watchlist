@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
 
@@ -43,27 +42,33 @@ export type ClaimUsernameOutcome = { success: true } | { success: false; error: 
 
 // FR-AUTH-5 rides along optionally: a display name set on the same screen is
 // written straight after a successful claim, not as a separate step.
-export function useClaimUsername() {
-    return useMutation({
-        mutationFn: async ({
-            username,
-            displayName,
-        }: {
-            username: string;
-            displayName?: string | undefined;
-        }): Promise<ClaimUsernameOutcome> => {
-            const { data, errors } = await client.mutations.claimUsername({ username });
-            if (errors?.length || !data) {
-                return { success: false, error: 'UNKNOWN' };
-            }
-            if (!data.success) {
-                return { success: false, error: data.error ?? 'UNKNOWN' };
-            }
-            if (displayName) {
-                const { userId } = await getCurrentUser();
-                await client.models.UserProfile.update({ id: userId, displayName });
-            }
-            return { success: true };
-        },
-    });
+//
+// A plain async function, not a TanStack Query mutation: this is called from
+// the post-verification username screen, which lives under the router's
+// `_auth/**` group — the one subtree QueryClientProvider deliberately does
+// NOT wrap (`_app/route.tsx`'s own comment: "`_auth/**` never imports this
+// module", to keep TanStack Query out of the eager auth-shell bundle,
+// NFR-PERF-4). A `useMutation` here would throw "No QueryClient set" the
+// moment this screen rendered. ClaimUsernameForm doesn't need a mutation
+// object's own pending/error state anyway — it already tracks submission via
+// react-hook-form's own `isSubmitting`.
+export async function claimUsername({
+    username,
+    displayName,
+}: {
+    username: string;
+    displayName?: string | undefined;
+}): Promise<ClaimUsernameOutcome> {
+    const { data, errors } = await client.mutations.claimUsername({ username });
+    if (errors?.length || !data) {
+        return { success: false, error: 'UNKNOWN' };
+    }
+    if (!data.success) {
+        return { success: false, error: data.error ?? 'UNKNOWN' };
+    }
+    if (displayName) {
+        const { userId } = await getCurrentUser();
+        await client.models.UserProfile.update({ id: userId, displayName });
+    }
+    return { success: true };
 }

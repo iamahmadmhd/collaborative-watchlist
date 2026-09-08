@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { TextField } from '../../../shared/ui/text-field';
 import { Button } from '../../../shared/ui/button';
-import { useClaimUsername, useUsernameAvailability, USERNAME_PATTERN } from '../api/claim-username';
+import { claimUsername, useUsernameAvailability, USERNAME_PATTERN } from '../api/claim-username';
 
 const schema = z.object({
     username: z
@@ -34,11 +34,10 @@ export function ClaimUsernameForm({ submitLabel, onSuccess }: { submitLabel: str
     const candidate = usernameInput?.trim().toLowerCase();
     const validFormat = !!candidate && USERNAME_PATTERN.test(candidate);
     const checked = useUsernameAvailability(candidate, validFormat);
-    const claimUsername = useClaimUsername();
 
     const onSubmit = handleSubmit(async ({ username, displayName }) => {
         try {
-            const result = await claimUsername.mutateAsync({ username, displayName: displayName || undefined });
+            const result = await claimUsername({ username, displayName: displayName || undefined });
             if (!result.success) {
                 if (result.error === 'ALREADY_TAKEN') {
                     setError('username', { message: 'That username is already taken.' });

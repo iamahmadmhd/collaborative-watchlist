@@ -90,7 +90,7 @@ src/
   app/        providers/ router/ (file-based routes) get-router.tsx layouts/ styles/
   pages/      discover/ search/ movie-detail/ saved/ watchlists/ watchlist-detail/ settings/ auth/
   features/   save-movie/ manage-list-items/ manage-members/ toggle-watched/
-              create-watchlist/ filter-discovery/ claim-handle/
+              create-watchlist/ filter-discovery/ claim-username/
   entities/   movie/ (ui/ model/ api/)  watchlist/ (ui/ model/ api/)  member/ (ui/ model/)
   shared/     ui/ lib/ config/
 ```

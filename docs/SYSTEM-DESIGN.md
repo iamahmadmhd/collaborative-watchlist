@@ -88,7 +88,7 @@ src/
   features/
     save-movie/         manage-list-items/    manage-members/
     toggle-watched/     create-watchlist/     filter-discovery/
-    claim-handle/
+    claim-username/
   entities/
     movie/         ui/ model/ api/
     watchlist/     ui/ model/ api/

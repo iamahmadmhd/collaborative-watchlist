@@ -65,14 +65,14 @@ src/
   app/        providers, router (file-based routes), layouts, global styles
   pages/      discover, search, movie-detail, saved, watchlists, watchlist-detail, settings, auth
   features/   save-movie, manage-list-items, manage-members, toggle-watched,
-              create-watchlist, filter-discovery, claim-handle
+              create-watchlist, filter-discovery, claim-username
   entities/   movie, watchlist, member (each with ui/ model/ api/)
   shared/     ui (Base UI wrappers), lib, config
 
 amplify/
   auth/       Cognito user pool + triggers
   data/       schema, auth rules, custom operations
-  functions/  post-confirmation, tmdb-proxy, membership, claim-handle, permission-fanout
+  functions/  post-confirmation, tmdb-proxy, membership, claim-username, permission-fanout
 ```
 
 See [`CLAUDE.md`](CLAUDE.md) for the full naming and layering rules, including the one
@@ -102,7 +102,7 @@ Roughly the order the System Design document itself argues for (auth model first
 everything else's authorization depends on it existing):
 
 1. `amplify/auth` + `post-confirmation` — registration, verification, UserProfile creation ✅
-2. `claim-handle` — atomic handle claiming (FR-AUTH-3/4)
+2. `claim-username` — atomic username claiming (FR-AUTH-3/4)
 3. Discovery + `tmdb-proxy` — authenticated-only as of v1.1 (ADR-009), so this now depends on step 1
 4. Saved films — simplest authenticated feature, good place to prove the TanStack Query + Amplify wiring
 5. Watchlists (owner-only, no collaboration yet) — `create-watchlist`, `manage-list-items`

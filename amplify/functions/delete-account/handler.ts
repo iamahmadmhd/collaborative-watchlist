@@ -1,8 +1,9 @@
 import type { AppSyncIdentityCognito, AppSyncResolverHandler } from 'aws-lambda';
-import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DeleteCommand, DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type { Schema } from '../../data/resource';
 import { batchWriteChunked, queryAllPages } from '../shared/dynamo-batch';
+import { conditionalCheckFailedAt } from '../shared/transact-write-errors';
 
 // delete-account — NFR-COMP-2 ("Members shall be able to delete their account, removing
 // their profile, saved films, watched records, and owned watchlists").
@@ -167,17 +168,11 @@ async function leaveWatchlist(watchlistId: string, callerId: string): Promise<vo
             );
             return;
         } catch (err) {
-            const memberAlreadyGone =
-                err instanceof TransactionCanceledException &&
-                err.CancellationReasons?.[1]?.Code === 'ConditionalCheckFailed';
-            if (memberAlreadyGone) {
-                return;
+            if (conditionalCheckFailedAt(err, 1)) {
+                return; // member already gone
             }
-            const lostRace =
-                err instanceof TransactionCanceledException &&
-                err.CancellationReasons?.[0]?.Code === 'ConditionalCheckFailed';
-            if (lostRace && attempt < MAX_LEAVE_RETRIES - 1) {
-                continue;
+            if (conditionalCheckFailedAt(err, 0) && attempt < MAX_LEAVE_RETRIES - 1) {
+                continue; // lost the optimistic-lock race — retry
             }
             throw err;
         }

@@ -4,7 +4,7 @@ import { useSavedSet } from '../../features/save-movie/api/saved-movies';
 import { useWatchlists } from '../../entities/watchlist/api/use-watchlists';
 import { memberColor, memberInitial } from '../../entities/member/model/member-color';
 
-export type ShellSection = 'Discover' | 'Saved' | 'Watchlists';
+export type ShellSection = 'Discover' | 'Saved' | 'Watchlists' | 'Settings';
 
 // docs/design/Shell Sidebar.dc.html, desktop nav rail (System Design nav:
 // "left sidebar rail with the list of watchlists always visible"). Watchlists
@@ -64,7 +64,14 @@ export function ShellSidebar({ active, className }: { active: ShellSection; clas
                 <NavRow label='Saved' count={savedSet?.size} active={active === 'Saved'} to='/saved' />
                 <NavRow label='Watchlists' count={watchlists?.length} active={active === 'Watchlists'} to='/lists' />
             </nav>
-            <div className='border-border mt-auto flex items-center gap-2.5 border-t px-5 pt-3.5'>
+            {/* Doubles as the desktop entry point to /settings — docs/design's Shell
+                Sidebar mock has no separate nav row for it (its `active` enum only
+                covers Discover/Saved/Watchlists), so this identity block is where
+                Settings is actually reached, matching the mobile Tab Bar's "YOU" tab. */}
+            <Link
+                to='/settings'
+                className={`border-border mt-auto flex items-center gap-2.5 border-t px-5 pt-3.5 ${active === 'Settings' ? 'text-accent' : ''}`}
+            >
                 <div
                     className='text-raised flex h-6.5 w-6.5 flex-none items-center justify-center rounded-full text-xs font-bold'
                     style={{ background: user ? memberColor(user.id) : undefined }}
@@ -72,12 +79,12 @@ export function ShellSidebar({ active, className }: { active: ShellSection; clas
                     {user ? memberInitial(user.displayName ?? user.username ?? '?') : ''}
                 </div>
                 <div className='flex min-w-0 flex-col leading-tight'>
-                    <span className='text-text truncate text-[13px] font-semibold'>
+                    <span className={`truncate text-[13px] font-semibold ${active === 'Settings' ? '' : 'text-text'}`}>
                         {user?.displayName ?? user?.username ?? '…'}
                     </span>
                     {user?.username && <span className='text-muted font-mono text-[10px]'>@{user.username}</span>}
                 </div>
-            </div>
+            </Link>
         </aside>
     );
 }

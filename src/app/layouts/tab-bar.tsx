@@ -1,14 +1,16 @@
 import { Link } from '@tanstack/react-router';
+import type { ShellSection } from './shell-sidebar';
 
-export type TabSection = 'Discover' | 'Saved' | 'Watchlists' | 'You';
+// Reuses ShellSidebar's section type (rather than its own wider union, as before
+// Settings existed) — both nav chrome pieces now agree on the same four
+// destinations, matching AppShell passing one `active` value to both.
+export type TabSection = ShellSection;
 
-const TABS: { label: string; section: TabSection; to?: string }[] = [
+const TABS: { label: string; section: TabSection; to: string }[] = [
     { label: 'DISCOVER', section: 'Discover', to: '/discover' },
     { label: 'SAVED', section: 'Saved', to: '/saved' },
     { label: 'LISTS', section: 'Watchlists', to: '/lists' },
-    // You (Settings) has no page yet — see shell-sidebar.tsx's matching note.
-    // Not a `<Link>` until it exists.
-    { label: 'YOU', section: 'You' },
+    { label: 'YOU', section: 'Settings', to: '/settings' },
 ];
 
 // docs/design/Tab Bar.dc.html, verbatim — mobile-only bottom nav.
@@ -27,15 +29,14 @@ export function TabBar({ active, className }: { active: TabSection; className?: 
                         </span>
                     </>
                 );
-                const itemClassName = 'flex min-h-11 flex-1 flex-col items-center justify-center gap-1.25';
-                return tab.to ? (
-                    <Link key={tab.section} to={tab.to} className={itemClassName}>
+                return (
+                    <Link
+                        key={tab.section}
+                        to={tab.to}
+                        className='flex min-h-11 flex-1 flex-col items-center justify-center gap-1.25'
+                    >
                         {content}
                     </Link>
-                ) : (
-                    <div key={tab.section} className={itemClassName}>
-                        {content}
-                    </div>
                 );
             })}
         </nav>

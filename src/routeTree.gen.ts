@@ -15,6 +15,7 @@ import { Route as AppIndexRouteImport } from './app/router/_app/index'
 import { Route as AppDiscoverRouteImport } from './app/router/_app/discover'
 import { Route as AppSavedRouteImport } from './app/router/_app/saved'
 import { Route as AppSearchRouteImport } from './app/router/_app/search'
+import { Route as AppSettingsRouteImport } from './app/router/_app/settings'
 import { Route as AuthGetStartedRouteImport } from './app/router/_auth/get-started'
 import { Route as AuthSetUsernameRouteImport } from './app/router/_auth/set-username'
 import { Route as AuthVerifyRouteImport } from './app/router/_auth/verify'
@@ -48,6 +49,11 @@ const AppSavedRoute = AppSavedRouteImport.update({
 const AppSearchRoute = AppSearchRouteImport.update({
   id: '/search',
   path: '/search',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AuthGetStartedRoute = AuthGetStartedRouteImport.update({
@@ -86,6 +92,7 @@ export interface FileRoutesByFullPath {
   '/discover': typeof AppDiscoverRoute
   '/saved': typeof AppSavedRoute
   '/search': typeof AppSearchRoute
+  '/settings': typeof AppSettingsRoute
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
@@ -98,6 +105,7 @@ export interface FileRoutesByTo {
   '/discover': typeof AppDiscoverRoute
   '/saved': typeof AppSavedRoute
   '/search': typeof AppSearchRoute
+  '/settings': typeof AppSettingsRoute
   '/get-started': typeof AuthGetStartedRoute
   '/set-username': typeof AuthSetUsernameRoute
   '/verify': typeof AuthVerifyRoute
@@ -112,6 +120,7 @@ export interface FileRoutesById {
   '/_app/discover': typeof AppDiscoverRoute
   '/_app/saved': typeof AppSavedRoute
   '/_app/search': typeof AppSearchRoute
+  '/_app/settings': typeof AppSettingsRoute
   '/_auth/get-started': typeof AuthGetStartedRoute
   '/_auth/set-username': typeof AuthSetUsernameRoute
   '/_auth/verify': typeof AuthVerifyRoute
@@ -127,6 +136,7 @@ export interface FileRouteTypes {
     | '/discover'
     | '/saved'
     | '/search'
+    | '/settings'
     | '/get-started'
     | '/set-username'
     | '/verify'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/discover'
     | '/saved'
     | '/search'
+    | '/settings'
     | '/get-started'
     | '/set-username'
     | '/verify'
@@ -152,6 +163,7 @@ export interface FileRouteTypes {
     | '/_app/discover'
     | '/_app/saved'
     | '/_app/search'
+    | '/_app/settings'
     | '/_auth/get-started'
     | '/_auth/set-username'
     | '/_auth/verify'
@@ -210,6 +222,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSearchRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_auth/get-started': {
       id: '/_auth/get-started'
       path: '/get-started'
@@ -259,6 +278,7 @@ interface AppRouteRouteChildren {
   AppDiscoverRoute: typeof AppDiscoverRoute
   AppSavedRoute: typeof AppSavedRoute
   AppSearchRoute: typeof AppSearchRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppListsWatchlistIdRoute: typeof AppListsWatchlistIdRoute
   AppMovieMovieIdRoute: typeof AppMovieMovieIdRoute
@@ -269,6 +289,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppDiscoverRoute: AppDiscoverRoute,
   AppSavedRoute: AppSavedRoute,
   AppSearchRoute: AppSearchRoute,
+  AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
   AppListsWatchlistIdRoute: AppListsWatchlistIdRoute,
   AppMovieMovieIdRoute: AppMovieMovieIdRoute,

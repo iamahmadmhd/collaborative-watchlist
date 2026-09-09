@@ -1,9 +1,35 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>collaborative-watchlist</title>
+        <!--
+          FR-THEME-2/5. Applies the resolved theme before first paint, so a dark-mode
+          user never sees a light flash while the bundle loads. Deliberately a plain
+          classic script (no type="module"/defer) so it runs synchronously during head
+          parsing, before <body> exists. This duplicates src/shared/lib/theme.ts's
+          resolution rule on purpose — that module can't run yet at this point, so the
+          logic is kept here too. Change one, change both.
+        -->
+        <script>
+            (function () {
+                try {
+                    var stored = localStorage.getItem('theme');
+                    var preference = stored === 'light' || stored === 'dark' ? stored : 'system';
+                    var resolved =
+                        preference === 'system'
+                            ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                                ? 'dark'
+                                : 'light'
+                            : preference;
+                    if (resolved === 'dark') document.documentElement.classList.add('dark');
+                } catch (e) {
+                    // Storage/matchMedia unavailable — fall back to the light default
+                    // rather than blocking first paint.
+                }
+            })();
+        </script>
     </head>
     <body>
         <div id="app"></div>

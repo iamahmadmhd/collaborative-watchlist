@@ -16,7 +16,9 @@ import { useIsMovieInWatchlist, useToggleListItem } from '../api/manage-list-ite
 export function AddToListMenu({ movie }: { movie: MovieSummary }) {
     const [open, setOpen] = useState(false);
     const { data: watchlists, isPending, isError } = useWatchlists();
+
     const editableLists = watchlists?.filter((watchlist) => canEditWatchlist(watchlist.role)) ?? [];
+    const isEmpty = !isPending && !isError && editableLists.length === 0;
 
     return (
         <MenuRoot open={open} onOpenChange={setOpen}>
@@ -24,7 +26,7 @@ export function AddToListMenu({ movie }: { movie: MovieSummary }) {
             <MenuPopup>
                 {isPending && <div className='text-muted px-3 py-2 text-sm'>Loading your lists…</div>}
                 {isError && <div className='text-danger px-3 py-2 text-sm'>Could not load your watchlists.</div>}
-                {!isPending && !isError && editableLists.length === 0 && (
+                {isEmpty && (
                     <div className='text-muted max-w-64 px-3 py-2 text-sm'>
                         You don&apos;t have an editable watchlist yet — create one from the Watchlists page.
                     </div>

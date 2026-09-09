@@ -12,6 +12,7 @@ import { claimUsername } from './functions/claim-username/resource';
 import { tmdbProxy } from './functions/tmdb-proxy/resource';
 import { membership } from './functions/membership/resource';
 import { permissionFanout } from './functions/permission-fanout/resource';
+import { deleteAccount } from './functions/delete-account/resource';
 
 const backend = defineBackend({
     auth,
@@ -21,6 +22,7 @@ const backend = defineBackend({
     tmdbProxy,
     membership,
     permissionFanout,
+    deleteAccount,
 });
 
 // System Design §5.5, ADR-007. Plain CDK, not an Amplify Data model — TmdbCache must
@@ -80,6 +82,81 @@ usernameTable.grant(membershipLambda, 'dynamodb:GetItem');
 (membershipLambda as lambda.Function).addEnvironment('WATCHLIST_TABLE_NAME', watchlistTable.tableName);
 (membershipLambda as lambda.Function).addEnvironment('WATCHLIST_MEMBER_TABLE_NAME', watchlistMemberTable.tableName);
 (membershipLambda as lambda.Function).addEnvironment('USERNAME_TABLE_NAME', usernameTable.tableName);
+
+// NFR-COMP-2. delete-account touches seven tables directly, for the same reason
+// membership does: cascade-deleting an owned watchlist and leaving a non-owned one both
+// require writing Watchlist.editors/viewers, which (as above) has no GraphQL write path
+// for anyone. grantReadWriteData() is avoided for the same TransactWriteItems/
+// BatchWriteItem-are-distinct-actions reason membership's own comment explains; each
+// grant below is scoped to exactly what delete-account/handler.ts's operations use.
+const savedMovieTable = backend.data.resources.tables.SavedMovie;
+const watchStatusTable = backend.data.resources.tables.WatchStatus;
+const userProfileTable = backend.data.resources.tables.UserProfile;
+const deleteAccountLambda = backend.deleteAccount.resources.lambda;
+
+watchlistTable.grant(
+    deleteAccountLambda,
+    'dynamodb:GetItem',
+    'dynamodb:UpdateItem',
+    'dynamodb:DeleteItem',
+    'dynamodb:TransactWriteItems',
+);
+watchlistMemberTable.grant(
+    deleteAccountLambda,
+    'dynamodb:Query',
+    'dynamodb:DeleteItem',
+    'dynamodb:BatchWriteItem',
+    'dynamodb:TransactWriteItems',
+);
+watchlistItemTable.grant(deleteAccountLambda, 'dynamodb:Query', 'dynamodb:BatchWriteItem');
+savedMovieTable.grant(deleteAccountLambda, 'dynamodb:Query', 'dynamodb:BatchWriteItem');
+watchStatusTable.grant(deleteAccountLambda, 'dynamodb:Query', 'dynamodb:BatchWriteItem');
+userProfileTable.grant(deleteAccountLambda, 'dynamodb:GetItem', 'dynamodb:DeleteItem');
+usernameTable.grant(deleteAccountLambda, 'dynamodb:DeleteItem');
+
+// Table.grant() above only ever authorizes the base table ARN, never
+// `${tableArn}/index/*` — confirmed in aws-cdk-lib's own table-grants.js: it includes
+// the index ARN pattern only when the table object's `hasIndex` is true, which in turn
+// only gets set on a concrete `new dynamodb.Table()` construct that tracked its own
+// `.addGlobalSecondaryIndex()` calls. backend.data.resources.tables.X is a reference
+// to Amplify Data's custom-resource-backed table, not that construct, so `hasIndex`
+// silently defaults to false and every Query against a named GSI needs its own
+// explicit grant here — same idiom as the stream ARN permissions above (a resource
+// class Table.grant()'s generated policy structurally can't reach). WatchlistMember's
+// byUser, SavedMovie's byUserAndDate, and WatchStatus's byUserAndList are the three
+// indexes delete-account/handler.ts queries.
+deleteAccountLambda.addToRolePolicy(
+    new iam.PolicyStatement({
+        actions: ['dynamodb:Query'],
+        resources: [
+            `${watchlistMemberTable.tableArn}/index/*`,
+            `${savedMovieTable.tableArn}/index/*`,
+            `${watchStatusTable.tableArn}/index/*`,
+        ],
+    }),
+);
+
+(deleteAccountLambda as lambda.Function).addEnvironment('WATCHLIST_TABLE_NAME', watchlistTable.tableName);
+(deleteAccountLambda as lambda.Function).addEnvironment('WATCHLIST_MEMBER_TABLE_NAME', watchlistMemberTable.tableName);
+(deleteAccountLambda as lambda.Function).addEnvironment('WATCHLIST_ITEM_TABLE_NAME', watchlistItemTable.tableName);
+(deleteAccountLambda as lambda.Function).addEnvironment('SAVED_MOVIE_TABLE_NAME', savedMovieTable.tableName);
+(deleteAccountLambda as lambda.Function).addEnvironment('WATCH_STATUS_TABLE_NAME', watchStatusTable.tableName);
+(deleteAccountLambda as lambda.Function).addEnvironment('USER_PROFILE_TABLE_NAME', userProfileTable.tableName);
+(deleteAccountLambda as lambda.Function).addEnvironment('USERNAME_TABLE_NAME', usernameTable.tableName);
+
+// Deliberately NOT done: granting userProfileTable directly to postConfirmationLambda
+// (post-confirmation is grouped into the AUTH stack, not this one — resource.ts's own
+// comment). The data stack already depends on the auth stack one way (defineData's
+// userPool authorization mode needs the User Pool as its AppSync authorizer); a plain
+// Table.grant() here would create the return edge (auth stack needing this stack's
+// table ARN), and two edges between the same two stacks in opposite directions is
+// exactly the CloudformationStackCircularDependencyError permission-fanout's own
+// comment (above) describes for a different pair of stacks. allow.resource(fn) in
+// data/resource.ts's schema-level authorization is the one mechanism here that only
+// ever points this direction (data stack -> fn's stack, never the reverse) — which is
+// why post-confirmation's UserProfile.create() goes through that grant instead of a
+// raw table grant, unlike delete-account/membership above (both already live in this
+// stack, so granting them tables from it is an intra-stack edge, not cross-stack).
 
 // System Design §4.5, §5.4. permission-fanout consumes DynamoDB Streams on both
 // Watchlist and WatchlistItem. Amplify Gen 2 does not expose stream configuration

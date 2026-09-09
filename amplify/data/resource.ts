@@ -3,6 +3,7 @@ import { postConfirmation } from '../functions/post-confirmation/resource';
 import { claimUsername } from '../functions/claim-username/resource';
 import { tmdbProxy } from '../functions/tmdb-proxy/resource';
 import { membership } from '../functions/membership/resource';
+import { deleteAccount } from '../functions/delete-account/resource';
 
 // Models below follow System Design §5.1 (Data Design) exactly. Before changing a
 // key structure or auth rule, re-read §4.4 (Authorization Model) and ADR-001 — the
@@ -30,7 +31,23 @@ const schema = a
             })
             .authorization((allow) => [
                 allow.authenticated().to(['read']),
-                allow.owner().to(['read', 'update']),
+                // ownerDefinedIn('id') rather than the default owner() (which would add
+                // and rely on a SEPARATE auto-populated `owner` field): default owner
+                // auth's auto-population only runs on a genuine userPool-authenticated
+                // write, but post-confirmation creates this row over IAM
+                // (allow.resource() below) — that auto-population never fires, so a
+                // separate `owner` field would stay permanently empty and every later
+                // owner-authenticated update() would be silently denied (the original
+                // form of this bug: display name never persisted). `id` has no such
+                // problem — it's the Cognito sub, and every writer (this create,
+                // claim-username's later update) already sets it correctly as a matter
+                // of course, so pointing ownership at it needs no extra field, no extra
+                // write, and no extra IAM grant. identityClaim('sub') matches the same
+                // bare claim against it (default owner() would compare against the
+                // composite `sub::cognito:username` claim instead — moot here anyway,
+                // since auth/resource.ts's email+OTP login has no real Cognito username
+                // to compose with).
+                allow.ownerDefinedIn('id').identityClaim('sub').to(['read', 'update']),
                 // FR-AUTH-7: email is intentionally NOT a field here — never expose it.
             ]),
 
@@ -345,6 +362,23 @@ const schema = a
             .returns(a.ref('ChangeRoleResult'))
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(membership)),
+
+        // NFR-COMP-2. No arguments and no error enum: unlike addMember/removeMember/
+        // changeMemberRole, there is no target to get wrong and no ownership/self check to
+        // fail — deleteAccount only ever acts on event.identity.sub, so it's inherently
+        // self-scoped by construction, not by a runtime check. allow.authenticated() is the
+        // same coarse gate the other membership-style mutations use; the handler's actual
+        // writes go straight to DynamoDB (delete-account/handler.ts), same reason as
+        // membership's own mutations bypass the generated resolvers.
+        DeleteAccountResult: a.customType({
+            success: a.boolean().required(),
+        }),
+        deleteAccount: a
+            .mutation()
+            .arguments({})
+            .returns(a.ref('DeleteAccountResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(deleteAccount)),
     })
     .authorization((allow) => [
         // allow.resource(fn) is only available at schema level in the installed
@@ -352,14 +386,24 @@ const schema = a
         // (ModelType/ModelField's authorization() callbacks omit `resource` from
         // the allow-modifier type). The IAM policy this grants post-confirmation
         // is schema-wide 'mutate', wider than "create on UserProfile only"; the
-        // handler itself only ever calls UserProfile.create. When membershipFn
-        // lands, its grant joins this same list.
-        allow.resource(postConfirmation).to(['mutate']),
+        // handler itself only ever calls UserProfile.create.
+        //
+        // This is also the one mechanism here safe from a stack-topology trap:
+        // post-confirmation is grouped into the AUTH stack (its resource.ts —
+        // required for the Cognito trigger wiring in auth/resource.ts), and the
+        // data stack already depends on the auth stack one way (defineData's
+        // userPool authorization mode needs the User Pool as its authorizer).
+        // allow.resource(fn) only ever points data-stack -> fn's-stack, so it
+        // stacks harmlessly on top of that same-direction dependency; backend.ts
+        // has the fuller comment on why a plain CDK Table.grant() the other way
+        // (data-stack table -> auth-stack function) isn't safe to add instead.
+        //
         // claim-username reads UserProfile (to reject an already-claimed member),
         // creates Username, and updates UserProfile.username. Schema-level allow.resource()
         // operations are GraphQL-shaped ('query' | 'mutate' | 'listen'), not the
         // per-field CRUD vocabulary used inside a model's own .to() — 'query' covers
         // the UserProfile.get() read, same schema-wide-grant caveat as above.
+        allow.resource(postConfirmation).to(['mutate']),
         allow.resource(claimUsername).to(['mutate', 'query']),
     ]);
 

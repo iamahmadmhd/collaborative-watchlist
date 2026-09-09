@@ -40,7 +40,7 @@ export function EditProfileForm({ currentDisplayName }: { currentDisplayName: st
 
     return (
         <form onSubmit={onSubmit} noValidate className='flex flex-col gap-1.5'>
-            <div className='flex items-end gap-2.5'>
+            <div className='flex gap-2.5'>
                 <TextField
                     label='Display name'
                     autoComplete='name'
@@ -48,13 +48,7 @@ export function EditProfileForm({ currentDisplayName }: { currentDisplayName: st
                     errorMessage={errors.displayName?.message}
                     {...register('displayName')}
                 />
-                <Button
-                    type='submit'
-                    variant='secondary'
-                    isLoading={isSubmitting}
-                    disabled={!isDirty}
-                    className='h-11'
-                >
+                <Button type='submit' variant='secondary' isLoading={isSubmitting} disabled={!isDirty} className='h-11'>
                     Save
                 </Button>
             </div>

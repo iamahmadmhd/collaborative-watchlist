@@ -2,7 +2,15 @@
 
 ## Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.5 Date: 20 August 2026 Status: Approved
+Version: 1.6 Date: 10 September 2026 Status: Approved
+
+Revision note (v1.6): A member reported being unable to load poster/cast images —
+image.tmdb.org is unreachable from their network. FR-TMDB-4 already required the
+system to return relative image paths and let the client pick the rendering size;
+it did not say which domain the resulting URL is built against, and the
+implementation had silently assumed TMDB's own CDN. New requirement FR-TMDB-8 makes
+that domain the system's own, not TMDB's, closing the gap explicitly rather than
+leaving it implied. See System Design v1.6 §5.1, §6, and ADR-013.
 
 Revision note (v1.5): FR-AUTH-1's registration attempt now tries account creation
 before checking for an existing account, not the reverse — the order in which the
@@ -229,15 +237,16 @@ These are fixed inputs to the design phase, not outcomes of it:
 
 ### 3.9 Film Data Integration
 
-| ID        | Requirement                                                                                                                                                           | Priority |
-| :-------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------- |
-| FR-TMDB-1 | All TMDB requests shall be issued server-side. The TMDB credential shall never be present in client-delivered code or network traffic.                                | Must     |
-| FR-TMDB-2 | TMDB responses shall be cached server-side with expiry periods appropriate to volatility, and served from cache when unexpired.                                       | Must     |
-| FR-TMDB-3 | TMDB responses shall be normalised into application-defined types before reaching the client; TMDB's field naming shall not appear in the application's API contract. | Must     |
-| FR-TMDB-4 | The system shall return relative image paths and allow the client to select an appropriate rendering size.                                                            | Must     |
-| FR-TMDB-5 | The system shall store a display snapshot alongside each film reference so that lists render from local data alone.                                                   | Must     |
-| FR-TMDB-6 | The system shall display TMDB attribution and logo as required by TMDB's terms of use.                                                                                | Must     |
-| FR-TMDB-7 | On TMDB unavailability, the system shall continue to serve existing watchlists and saved films from stored snapshots, degrading only discovery and search.            | Must     |
+| ID        | Requirement                                                                                                                                                                                                                                                                             | Priority |
+| :-------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------- |
+| FR-TMDB-1 | All TMDB requests shall be issued server-side. The TMDB credential shall never be present in client-delivered code or network traffic.                                                                                                                                                  | Must     |
+| FR-TMDB-2 | TMDB responses shall be cached server-side with expiry periods appropriate to volatility, and served from cache when unexpired.                                                                                                                                                         | Must     |
+| FR-TMDB-3 | TMDB responses shall be normalised into application-defined types before reaching the client; TMDB's field naming shall not appear in the application's API contract.                                                                                                                   | Must     |
+| FR-TMDB-4 | The system shall return relative image paths and allow the client to select an appropriate rendering size.                                                                                                                                                                              | Must     |
+| FR-TMDB-5 | The system shall store a display snapshot alongside each film reference so that lists render from local data alone.                                                                                                                                                                     | Must     |
+| FR-TMDB-6 | The system shall display TMDB attribution and logo as required by TMDB's terms of use.                                                                                                                                                                                                  | Must     |
+| FR-TMDB-7 | On TMDB unavailability, the system shall continue to serve existing watchlists and saved films from stored snapshots, degrading only discovery and search.                                                                                                                              | Must     |
+| FR-TMDB-8 | Poster and cast-photo image bytes shall be served from a domain the system controls, not directly from TMDB's image CDN, so that a network-level block on TMDB's CDN does not prevent members from viewing artwork. The system fetches from TMDB on a cache miss and caches the result. | Must     |
 
 ### 3.10 Presentation and Theme
 

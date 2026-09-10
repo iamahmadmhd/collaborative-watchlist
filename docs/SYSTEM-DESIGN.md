@@ -2,7 +2,15 @@
 
 ## Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.5 Date: 20 August 2026 Companion to: SRS v1.5
+Version: 1.6 Date: 10 September 2026 Companion to: SRS v1.6
+
+Revision note (v1.6): Poster and cast-photo images are now served from our own
+CloudFront distribution instead of image.tmdb.org directly (FR-TMDB-8, new). A new
+image-proxy Lambda function, fronted by CloudFront via a Function URL with Origin
+Access Control, downloads from TMDB on a cache miss and caches the bytes in a
+dedicated S3 bucket; the client is unchanged in shape — it still receives a
+relative posterPath and picks the rendering size (FR-TMDB-4) — only the domain
+posterUrl() builds against moves. Affected: §5.1, §6, §9, and ADR-013 (new).
 
 Revision note (v1.5): The sign-up form now attempts account creation before
 checking for an existing account, not the reverse. Confirmed against the deployed
@@ -419,6 +427,7 @@ Four queries: discoverMovies, searchMovies, getMovieDetails, getGenres. All Lamb
 Credential handling (FR-TMDB-1): TMDB's bearer Read Access Token, held in SSM Parameter Store as the `TMDB_ACCESS_TOKEN` secret and referenced via Amplify Gen 2's secret() helper. Sent to TMDB in an Authorization header, never as a query parameter — keeps it out of URLs and access logs, and out of the client bundle and any committed .env.  
 Normalisation (FR-TMDB-3): responses are parsed by Zod schemas and mapped to application-defined camelCase types. TMDB's field naming never reaches the GraphQL schema. Coupling the API contract to a third party's shape would make provider substitution touch every component. Zod also enforces the SRS position that TMDB is an untrusted input \- shape drift fails loudly rather than propagating undefined.  
 Image paths (FR-TMDB-4): relative paths are returned, not full URLs. The client selects the rendering size \- w185 for grid cards, w500 for detail. Server-side URL construction would ship 500px images into 120px cells.  
+Image hosting (FR-TMDB-8, v1.6, ADR-013): the URL the client builds from that relative path points at our own CloudFront distribution, not image.tmdb.org. image-proxy (a Lambda behind CloudFront, via a Function URL restricted to CloudFront by Origin Access Control) fetches from TMDB on a cache miss and caches the bytes in a dedicated S3 bucket, keyed by the same {size, path} pair the client already picks. TMDB image paths are content-addressed, so a cached object is never wrong \- only, rarely, superseded by a re-shot poster at the same path, which a 90-day S3 lifecycle expiry bounds.  
 Snapshots (FR-TMDB-5): title, poster path, and release year are denormalised onto WatchlistItem and SavedMovie. Cost: occasional staleness against TMDB. Benefit: a 50-item list renders from one query rather than 50 external calls (FR-ITEM-6). A background refresh job is a viable later addition.  
 Degradation (FR-TMDB-7 / NFR-REL-1): because lists render from snapshots, TMDB unavailability degrades discovery and search only. Authentication and stored data remain fully functional.  
 Attribution (FR-TMDB-6 / NFR-COMP-1): TMDB logo and the required non-endorsement statement in the footer. Contractual, not optional.  
@@ -611,6 +620,28 @@ Consequences:
 - The sign-up form's submit handler tries account creation first; a duplicate-account error triggers the sign-in fallback, not the reverse.
 - No schema, backend function, or Cognito configuration change — this is a client-side call-order correction only.
 
+### ADR-013 \- Image proxy/cache over direct TMDB CDN linking
+
+Status: Accepted  
+Context: A member reported being unable to load posters or cast photos — image.tmdb.org is unreachable from their network. FR-TMDB-4 already had the system return a relative image path and let the client pick the rendering size; it never said which domain the resulting URL is built against, and the implementation had silently assumed TMDB's own image CDN. No FR/NFR covered re-hosting the bytes ourselves, and §10's open items list the cost model as undecided — an image proxy has a real, if small, per-request cost. Flagged and decided explicitly (2026-09-10) rather than silently invented, per this document's own rule for exactly this situation; see FR-TMDB-8 (new, SRS v1.6).  
+Decision: Re-host poster/cast-photo bytes behind our own CloudFront distribution. A new Lambda (image-proxy), reachable only via a Function URL that CloudFront invokes through Origin Access Control, serves a cache hit from a dedicated S3 bucket or, on a miss, fetches from image.tmdb.org, stores the result, and returns it. `posterUrl()` (src/entities/movie/model/movie.ts) builds against the CloudFront domain (exposed via a custom Amplify output) instead of image.tmdb.org.  
+Options considered:
+
+| Option                                           | Benefit                                                                                    | Cost                                                                                                    |
+| :----------------------------------------------- | :----------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------ |
+| A. Do nothing \- link to image.tmdb.org directly | zero infrastructure, zero cost, matches FR-TMDB-4's original (implicit) assumption         | the reported failure persists for any member on a network that blocks TMDB's CDN                        |
+| B. Lambda Function URL + S3, no CloudFront       | fewer moving parts than C                                                                  | every repeat request re-invokes Lambda; no edge caching; higher latency and cost under real traffic     |
+| C. CloudFront + Lambda Function URL (OAC) + S3   | edge-cached repeat requests skip Lambda and S3 entirely; standard, well-documented pattern | new AWS services (CloudFront, S3) and their own cost surface, on top of an already-undecided cost model |
+
+Decision: Option C.  
+Rationale: the failure is real and reported, not hypothetical, so Option A (leaving FR-TMDB-4 as originally, implicitly, built) wasn't viable. Between B and C, most image requests are repeat views of a small set of popular posters — trending lists, a shared watchlist's items — so CloudFront's edge cache does the majority of the work the DynamoDB-cache-over-Redis reasoning in ADR-007 already endorses for a different resource: keep the expensive tier (here, Lambda + S3, there, DynamoDB) off the hot path. The cost-model open item (§10) is not resolved by this ADR — it's still open — but S3 and CloudFront's pay-per-use pricing keeps a portfolio application's idle cost near zero, the same shape of trade-off ADR-007 already accepted.  
+Consequences:
+
+- New: `amplify/functions/image-proxy/` (Lambda), an S3 bucket, and a CloudFront distribution — all provisioned inside image-proxy's own auto-generated nested stack (not a new sibling stack — see amplify/backend.ts's own comment for the circular-dependency reason, the same one permission-fanout's wiring already documents).
+- `posterUrl()`'s signature and FR-TMDB-4's contract (relative path in, client picks size) are unchanged; only the domain the URL is built against moves, via a new custom Amplify output (`imageCdnDomain`).
+- A network-level block on our own CloudFront domain would reproduce the original failure — no defense against that is claimed here, only against TMDB's CDN specifically being blocked.
+- Image bytes are cached for up to 90 days (S3 lifecycle expiry) before a re-fetch from TMDB; TMDB image paths are content-addressed, so a cache hit is never stale in a way that matters, only occasionally superseded by a re-shot image at the same path (same class of drift as Known Limitations #3).
+
 ## 9\. Known Limitations
 
 Stated explicitly rather than discovered later:
@@ -623,6 +654,8 @@ Stated explicitly rather than discovered later:
 6. Username _changes_ are not supported in this release; the sentinel table would need a release-and-claim transaction. One exception (ADR-011, v1.4): a member who verified but never completed the username screen — including one who abandoned it before submitting — may still claim a first one via \`claim-username\`, either from that screen or, later, from Settings. That is claiming, not changing; it stays a one-shot, first-claim-only operation.
 7. Nothing is visible before registration (ADR-009). A reviewer or prospective user sees only a sign-in screen. Mitigated by a seeded demonstration account, not by reopening an anonymous surface.
 8. Every discovery session now costs a Cognito token exchange before the first TMDB call. Negligible in latency terms against NFR-PERF-1, but it means discovery can no longer be demonstrated with a bare curl against the endpoint.
+9. image-proxy (ADR-013, v1.6) adds CloudFront and S3 to the cost surface, ahead of the cost model §10 still lists as undecided — pay-per-use, so idle cost stays near zero, but not yet reconciled with whatever that model ends up being.
+10. A network that blocks our CloudFront domain specifically (rather than TMDB's) would reproduce the original image-loading failure ADR-013 was written to fix. Not mitigated — out of scope for this release.
 
 ## 10\. Open Items
 

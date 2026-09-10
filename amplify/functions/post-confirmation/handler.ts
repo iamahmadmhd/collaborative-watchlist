@@ -39,12 +39,33 @@ export const handler: PostConfirmationTriggerHandler = async (event) => {
 
     const { errors } = await client.models.UserProfile.create({ id: userId });
     if (errors?.length) {
-        // Thrown, not swallowed: Cognito's PostConfirmation trigger is blocking, so
-        // this fails the confirmation loudly instead of leaving a member signed up
-        // with no profile row — exactly the silent-failure mode the false start
-        // above (an unchecked `errors` return) hit once already.
+        // AWS's own documented behaviour, not a bug: "this trigger can be called more
+        // than once during a single sign-up," e.g. Cognito retrying after a transient
+        // timeout even though the first invocation already completed. A second run
+        // hits `id`'s attribute_not_exists condition (Amplify Data's default create()
+        // behaviour) purely because the first run already succeeded — the profile
+        // this trigger exists to create already exists, so this is the idempotent
+        // case, not a failure to report. Observed in practice: throwing here
+        // unconditionally (as this handler used to) left Cognito believing
+        // confirmation itself had failed, which keeps the account UNCONFIRMED —
+        // every subsequent confirm attempt re-invoked this trigger and hit the exact
+        // same conflict, permanently jamming that member out of their own account.
+        // Anything other than this specific conflict still throws loudly, same as
+        // before — that's the failure mode the false start above (an unchecked
+        // `errors` return, swallowing everything) was fixed to catch.
+        if (isAlreadyCreated(errors)) {
+            return event;
+        }
         throw new Error(`post-confirmation: failed to create UserProfile: ${JSON.stringify(errors)}`);
     }
 
     return event;
 };
+
+function isAlreadyCreated(errors: ReadonlyArray<{ errorType?: string; message?: string }>): boolean {
+    return errors.some(
+        (e) =>
+            e.errorType?.includes('ConditionalCheckFailedException') ||
+            e.message?.includes('ConditionalCheckFailedException'),
+    );
+}

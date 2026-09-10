@@ -1,4 +1,5 @@
 import type { Schema } from '../../../../amplify/data/resource';
+import { imageCdnDomain } from '../../../shared/config/image-cdn';
 
 // Types come straight from the GraphQL custom types in amplify/data/resource.ts
 // (FR-TMDB-3 — TMDB's own shape never reaches the client; tmdb-proxy's Zod
@@ -11,10 +12,16 @@ export type Genre = Schema['Genre']['type'];
 export type CastMember = Schema['CastMember']['type'];
 
 // FR-TMDB-4: the client picks the rendering size. w185 for grid/row cards and
-// cast photos, w500 for movie-detail's poster. TMDB serves the image CDN
-// itself, not the API host — an https URL is the whole "resolution."
+// cast photos, w500 for movie-detail's poster.
+//
+// System Design §5.1 extension: the URL is built against our own image-proxy/CloudFront
+// domain (amplify/backend.ts's ImageCdn), not image.tmdb.org directly — some members
+// can't reach TMDB's CDN from their network. image-proxy re-fetches and caches the same
+// bytes from image.tmdb.org on our side, keyed by exactly this {size, posterPath} pair,
+// so this is still "an https URL is the whole resolution," just against a domain we
+// control instead of TMDB's.
 export function posterUrl(posterPath: string | null | undefined, size: 'w185' | 'w500'): string | null {
-    return posterPath ? `https://image.tmdb.org/t/p/${size}${posterPath}` : null;
+    return posterPath && imageCdnDomain ? `https://${imageCdnDomain}/${size}${posterPath}` : null;
 }
 
 // SavedMovie (amplify/data/resource.ts) stores a releaseYear snapshot, not the

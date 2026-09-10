@@ -1,8 +1,11 @@
 import { defineBackend } from '@aws-amplify/backend';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { CfnResource, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { auth } from './auth/resource';
@@ -10,6 +13,7 @@ import { data } from './data/resource';
 import { postConfirmation } from './functions/post-confirmation/resource';
 import { claimUsername } from './functions/claim-username/resource';
 import { tmdbProxy } from './functions/tmdb-proxy/resource';
+import { imageProxy } from './functions/image-proxy/resource';
 import { membership } from './functions/membership/resource';
 import { permissionFanout } from './functions/permission-fanout/resource';
 import { deleteAccount } from './functions/delete-account/resource';
@@ -20,6 +24,7 @@ const backend = defineBackend({
     postConfirmation,
     claimUsername,
     tmdbProxy,
+    imageProxy,
     membership,
     permissionFanout,
     deleteAccount,
@@ -44,6 +49,73 @@ tmdbCacheTable.grantReadWriteData(backend.tmdbProxy.resources.lambda);
     'TMDB_CACHE_TABLE_NAME',
     tmdbCacheTable.tableName,
 );
+
+// System Design §5.1 extension (FR-TMDB-4), scope decision 2026-09-10: some members
+// cannot reach image.tmdb.org directly (network-level block reported against TMDB's
+// CDN), so posters/cast photos are re-hosted behind our own CloudFront distribution,
+// backed by image-proxy (download-on-miss, cache in S3, serve from S3 thereafter).
+// FR-TMDB-4 itself is unchanged — the client still receives a relative path and
+// picks the rendering size; only the domain posterUrl() builds against changes.
+//
+// Everything below lives in image-proxy's own auto-generated nested stack, not a new
+// sibling stack (backend.createStack(...) was tried first here too and hit the same
+// CloudformationStackCircularDependencyError permissionFanoutStack's comment above
+// describes: the bucket grant needs the function's role, in this hypothetical new
+// stack it would need the function's stack, and the distribution needs the Function
+// URL, also in the function's stack — two edges between the same two stacks in
+// opposite directions). Reusing Stack.of(imageProxyLambda) keeps every resource that
+// references the others in one stack, so neither edge is ever cross-stack.
+const imageProxyLambda = backend.imageProxy.resources.lambda;
+const imageProxyStack = Stack.of(imageProxyLambda);
+
+// DESTROY + autoDeleteObjects, same reasoning as TmdbCache above: this bucket holds
+// nothing but disposable re-fetchable TMDB image bytes, not user data. The lifecycle
+// rule is a bound on staleness, not a correctness requirement — TMDB image paths are
+// content-addressed, so a cached object never goes wrong, only (rarely) outdated.
+const imageCacheBucket = new s3.Bucket(imageProxyStack, 'ImageCache', {
+    removalPolicy: RemovalPolicy.DESTROY,
+    autoDeleteObjects: true,
+    blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+    lifecycleRules: [{ expiration: Duration.days(90) }],
+});
+imageCacheBucket.grantReadWrite(imageProxyLambda);
+(imageProxyLambda as lambda.Function).addEnvironment('IMAGE_CACHE_BUCKET_NAME', imageCacheBucket.bucketName);
+
+// AWS_IAM, not NONE: this Function URL is never called by the browser, only by
+// CloudFront via Origin Access Control (below) — see handler.ts's own header comment.
+const imageProxyFunctionUrl = imageProxyLambda.addFunctionUrl({
+    authType: lambda.FunctionUrlAuthType.AWS_IAM,
+    invokeMode: lambda.InvokeMode.BUFFERED,
+});
+
+// FunctionUrlOrigin.withOriginAccessControl both creates the OAC and grants
+// CloudFront (scoped to this specific distribution's ARN) lambda:InvokeFunctionUrl —
+// no separate permission statement needed here (verified against the construct's own
+// bind(), which adds that CfnPermission itself).
+const imageCdn = new cloudfront.Distribution(imageProxyStack, 'ImageCdn', {
+    comment: 'TMDB image cache/proxy (System Design §5.1 extension, FR-TMDB-4)',
+    defaultBehavior: {
+        origin: origins.FunctionUrlOrigin.withOriginAccessControl(imageProxyFunctionUrl),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+    },
+});
+
+imageProxyLambda.addPermission('AllowCloudFrontInvokeFunction', {
+    principal: new iam.ServicePrincipal('cloudfront.amazonaws.com'),
+    action: 'lambda:InvokeFunction',
+    sourceArn: `arn:aws:cloudfront::${Stack.of(imageProxyStack).account}:distribution/${imageCdn.distributionId}`,
+});
+
+// Consumed by src/shared/config/image-cdn.ts, mirroring how amplify_outputs.json
+// already carries every other frontend-facing backend value — no new frontend config
+// mechanism, just a new key in the existing one.
+backend.addOutput({
+    custom: {
+        imageCdnDomain: imageCdn.distributionDomainName,
+    },
+});
 
 // System Design §4.2, §4.4, §4.5, FR-MEM-8. membership writes Watchlist and
 // WatchlistMember atomically via DynamoDB TransactWriteItems — AppSync/Amplify Data

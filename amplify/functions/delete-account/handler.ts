@@ -1,8 +1,14 @@
 import type { AppSyncIdentityCognito, AppSyncResolverHandler } from 'aws-lambda';
 import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import {
+    BatchWriteCommand,
+    DeleteCommand,
+    DynamoDBDocumentClient,
+    GetCommand,
+    QueryCommand,
+    TransactWriteCommand,
+} from '@aws-sdk/lib-dynamodb';
 import type { Schema } from '../../data/resource';
-import { batchWriteChunked, queryAllPages } from '../shared/dynamo-batch';
 
 // delete-account — NFR-COMP-2 ("Members shall be able to delete their account, removing
 // their profile, saved films, watched records, and owned watchlists").
@@ -53,6 +59,8 @@ const WATCH_STATUS_TABLE = process.env.WATCH_STATUS_TABLE_NAME!;
 const USER_PROFILE_TABLE = process.env.USER_PROFILE_TABLE_NAME!;
 const USERNAME_TABLE = process.env.USERNAME_TABLE_NAME!;
 
+const BATCH_WRITE_CHUNK_SIZE = 25; // DynamoDB's hard per-call BatchWriteItem limit
+const MAX_BATCH_WRITE_RETRIES = 5;
 const MAX_LEAVE_RETRIES = 3; // bounded retry on the editors/viewers optimistic-lock CAS below
 
 type DeleteAccountResult = Schema['deleteAccount']['returnType'];
@@ -74,18 +82,64 @@ async function queryAll(
     expressionAttributeValues: Record<string, unknown>,
     indexName?: string,
 ): Promise<Record<string, unknown>[]> {
-    return queryAllPages(docClient, { tableName, keyConditionExpression, expressionAttributeValues, indexName });
+    const items: Record<string, unknown>[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+
+    do {
+        const result = await docClient.send(
+            new QueryCommand({
+                TableName: tableName,
+                IndexName: indexName,
+                KeyConditionExpression: keyConditionExpression,
+                ExpressionAttributeValues: expressionAttributeValues,
+                ExclusiveStartKey: exclusiveStartKey,
+            }),
+        );
+        items.push(...(result.Items ?? []));
+        exclusiveStartKey = result.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+
+    return items;
 }
 
+async function sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Mirrors permission-fanout's batchPutItems exactly, but for deletes and parameterised
+// over table — this handler needs the same chunked/retried BatchWriteItem idiom against
+// four different tables (WatchlistMember, WatchlistItem, SavedMovie, WatchStatus).
 // Naturally idempotent: deleting a key that's already gone is a no-op, not an error, so
 // re-running this handler after a partial prior failure never fails on already-cleaned rows.
 async function batchDeleteItems(tableName: string, keys: readonly Record<string, unknown>[]): Promise<void> {
-    await batchWriteChunked(
-        docClient,
-        tableName,
-        keys.map((key) => ({ DeleteRequest: { Key: key } })),
-        'delete-account',
-    );
+    for (let i = 0; i < keys.length; i += BATCH_WRITE_CHUNK_SIZE) {
+        let pending = keys.slice(i, i + BATCH_WRITE_CHUNK_SIZE);
+        let attempt = 0;
+
+        while (pending.length > 0) {
+            const result = await docClient.send(
+                new BatchWriteCommand({
+                    RequestItems: {
+                        [tableName]: pending.map((key) => ({ DeleteRequest: { Key: key } })),
+                    },
+                }),
+            );
+            const unprocessed = result.UnprocessedItems?.[tableName];
+            if (!unprocessed || unprocessed.length === 0) {
+                break;
+            }
+            attempt += 1;
+            if (attempt > MAX_BATCH_WRITE_RETRIES) {
+                throw new Error(
+                    `delete-account: BatchWriteItem against ${tableName} still had ${unprocessed.length} unprocessed key(s) after ${MAX_BATCH_WRITE_RETRIES} retries`,
+                );
+            }
+            pending = unprocessed
+                .map((request) => request.DeleteRequest?.Key as Record<string, unknown> | undefined)
+                .filter((key): key is Record<string, unknown> => key != null);
+            await sleep(2 ** attempt * 50);
+        }
+    }
 }
 
 // Decision 1 (file header): full cascade for a list this member owns. Order — items, then
@@ -168,14 +222,12 @@ async function leaveWatchlist(watchlistId: string, callerId: string): Promise<vo
             return;
         } catch (err) {
             const memberAlreadyGone =
-                err instanceof TransactionCanceledException &&
-                err.CancellationReasons?.[1]?.Code === 'ConditionalCheckFailed';
+                err instanceof TransactionCanceledException && err.CancellationReasons?.[1]?.Code === 'ConditionalCheckFailed';
             if (memberAlreadyGone) {
                 return;
             }
             const lostRace =
-                err instanceof TransactionCanceledException &&
-                err.CancellationReasons?.[0]?.Code === 'ConditionalCheckFailed';
+                err instanceof TransactionCanceledException && err.CancellationReasons?.[0]?.Code === 'ConditionalCheckFailed';
             if (lostRace && attempt < MAX_LEAVE_RETRIES - 1) {
                 continue;
             }
@@ -202,12 +254,7 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, DeleteAcco
         }
     }
 
-    const watchStatuses = await queryAll(
-        WATCH_STATUS_TABLE,
-        'userId = :userId',
-        { ':userId': callerId },
-        'byUserAndList',
-    );
+    const watchStatuses = await queryAll(WATCH_STATUS_TABLE, 'userId = :userId', { ':userId': callerId }, 'byUserAndList');
     await batchDeleteItems(
         WATCH_STATUS_TABLE,
         watchStatuses.map((status) => ({ userId: status.userId, itemId: status.itemId })),
@@ -219,9 +266,7 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, DeleteAcco
         savedMovies.map((movie) => ({ userId: movie.userId, tmdbId: movie.tmdbId })),
     );
 
-    const { Item: profile } = await docClient.send(
-        new GetCommand({ TableName: USER_PROFILE_TABLE, Key: { id: callerId } }),
-    );
+    const { Item: profile } = await docClient.send(new GetCommand({ TableName: USER_PROFILE_TABLE, Key: { id: callerId } }));
     if (profile?.username) {
         await docClient.send(new DeleteCommand({ TableName: USERNAME_TABLE, Key: { username: profile.username } }));
     }

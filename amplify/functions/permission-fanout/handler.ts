@@ -1,8 +1,13 @@
 import type { DynamoDBBatchResponse, DynamoDBRecord, DynamoDBStreamHandler } from 'aws-lambda';
 import { ConditionalCheckFailedException, DynamoDBClient, type AttributeValue } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import {
+    BatchWriteCommand,
+    DynamoDBDocumentClient,
+    PutCommand,
+    QueryCommand,
+    UpdateCommand,
+} from '@aws-sdk/lib-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
-import { batchWriteChunked, queryAllPages } from '../shared/dynamo-batch';
 
 // permission-fanout — System Design §4.5, §5.4, ADR-001
 //
@@ -60,6 +65,9 @@ const WATCHLIST_TABLE = process.env.WATCHLIST_TABLE_NAME!;
 const WATCHLIST_ITEM_TABLE = process.env.WATCHLIST_ITEM_TABLE_NAME!;
 const WATCHLIST_MEMBER_TABLE = process.env.WATCHLIST_MEMBER_TABLE_NAME!;
 
+const BATCH_WRITE_CHUNK_SIZE = 25; // DynamoDB's hard per-call limit (§4.5)
+const MAX_BATCH_WRITE_RETRIES = 5;
+
 function isImageOf(record: DynamoDBRecord, tableName: string): boolean {
     return record.eventSourceARN?.includes(`table/${tableName}/`) ?? false;
 }
@@ -77,21 +85,59 @@ function sameMembers(a: readonly string[], b: readonly string[]): boolean {
     return sortedA.every((value, i) => value === sortedB[i]);
 }
 
+async function sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function queryAllItems(watchlistId: string): Promise<Record<string, unknown>[]> {
-    return queryAllPages(docClient, {
-        tableName: WATCHLIST_ITEM_TABLE,
-        keyConditionExpression: 'watchlistId = :watchlistId',
-        expressionAttributeValues: { ':watchlistId': watchlistId },
-    });
+    const items: Record<string, unknown>[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+
+    do {
+        const result = await docClient.send(
+            new QueryCommand({
+                TableName: WATCHLIST_ITEM_TABLE,
+                KeyConditionExpression: 'watchlistId = :watchlistId',
+                ExpressionAttributeValues: { ':watchlistId': watchlistId },
+                ExclusiveStartKey: exclusiveStartKey,
+            }),
+        );
+        items.push(...(result.Items ?? []));
+        exclusiveStartKey = result.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+
+    return items;
 }
 
 async function batchPutItems(items: readonly Record<string, unknown>[]): Promise<void> {
-    await batchWriteChunked(
-        docClient,
-        WATCHLIST_ITEM_TABLE,
-        items.map((item) => ({ PutRequest: { Item: item } })),
-        'permission-fanout',
-    );
+    for (let i = 0; i < items.length; i += BATCH_WRITE_CHUNK_SIZE) {
+        let pending = items.slice(i, i + BATCH_WRITE_CHUNK_SIZE);
+        let attempt = 0;
+
+        while (pending.length > 0) {
+            const result = await docClient.send(
+                new BatchWriteCommand({
+                    RequestItems: {
+                        [WATCHLIST_ITEM_TABLE]: pending.map((item) => ({ PutRequest: { Item: item } })),
+                    },
+                }),
+            );
+            const unprocessed = result.UnprocessedItems?.[WATCHLIST_ITEM_TABLE];
+            if (!unprocessed || unprocessed.length === 0) {
+                break;
+            }
+            attempt += 1;
+            if (attempt > MAX_BATCH_WRITE_RETRIES) {
+                throw new Error(
+                    `permission-fanout: BatchWriteItem still had ${unprocessed.length} unprocessed item(s) after ${MAX_BATCH_WRITE_RETRIES} retries`,
+                );
+            }
+            pending = unprocessed
+                .map((request) => request.PutRequest?.Item as Record<string, unknown> | undefined)
+                .filter((item): item is Record<string, unknown> => item != null);
+            await sleep(2 ** attempt * 50); // basic exponential backoff — throughput contention only, not correctness
+        }
+    }
 }
 
 // §4.5: compares old/new Watchlist images; if editors or viewers changed, rewrites

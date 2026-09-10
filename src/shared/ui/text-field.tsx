@@ -42,6 +42,10 @@ export interface TextFieldProps extends Omit<React.ComponentProps<typeof Field.C
     // through unchanged would type-check as `any` and fail at runtime, not just
     // at the type level.
     className?: string | undefined;
+    rootClassName?: string | undefined;
+    labelClassName?: string | undefined;
+    descriptionClassName?: string | undefined;
+    errorClassName?: string | undefined;
     label: string;
     description?: string;
     // Explicitly `| undefined`, not just optional: callers pass RHF's
@@ -52,7 +56,17 @@ export interface TextFieldProps extends Omit<React.ComponentProps<typeof Field.C
 }
 
 export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function TextField(
-    { label, description, errorMessage, className, ...inputProps },
+    {
+        label,
+        description,
+        errorMessage,
+        className,
+        rootClassName,
+        labelClassName,
+        descriptionClassName,
+        errorClassName,
+        ...inputProps
+    },
     ref,
 ) {
     const id = useId();
@@ -60,15 +74,17 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function T
     const styles = textField({ invalid: hasError });
 
     return (
-        <Field.Root invalid={hasError} className={styles.root()}>
-            <Field.Label htmlFor={id} className={styles.label()}>
+        <Field.Root invalid={hasError} className={styles.root({ className: rootClassName })}>
+            <Field.Label htmlFor={id} className={styles.label({ className: labelClassName })}>
                 {label}
             </Field.Label>
             <Field.Control id={id} ref={ref} className={styles.control({ className })} {...inputProps} />
             {description && !hasError && (
-                <Field.Description className={styles.description()}>{description}</Field.Description>
+                <Field.Description className={styles.description({ className: descriptionClassName })}>
+                    {description}
+                </Field.Description>
             )}
-            <Field.Error match={hasError} className={styles.error()}>
+            <Field.Error match={hasError} className={styles.error({ className: errorClassName })}>
                 {errorMessage}
             </Field.Error>
         </Field.Root>

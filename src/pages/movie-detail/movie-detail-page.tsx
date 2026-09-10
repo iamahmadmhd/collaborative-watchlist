@@ -2,9 +2,11 @@ import { useMovieDetail, type NormalizedMovieDetail } from '../../entities/movie
 import { HATCH_STYLE } from '../../entities/movie/ui/movie-card';
 import { posterUrl, releaseYearOf, type CastMember } from '../../entities/movie/model/movie';
 import { useSavedSet } from '../../features/save-movie/api/saved-movies';
-import { SaveButton } from '../../features/save-movie/ui/save-button';
+import { SaveControl } from '../../features/save-movie/ui/save-control';
 import { AddToListMenu } from '../../features/manage-list-items/ui/add-to-list-menu';
-import { ArrowLeftIcon } from '@heroicons/react/24/solid';
+import { formatIsoDate } from '../../shared/lib/format-date';
+import { BackHeader, MobileBackHeader } from '../../shared/ui/back-header';
+import { QueryState } from '../../shared/ui/query-state';
 
 // docs/design/Movie Detail.dc.html. Two things the mock shows that this page
 // deliberately doesn't reproduce, neither backed by data this app actually has:
@@ -34,40 +36,16 @@ export function MovieDetailPage({ movieId }: { movieId: string }) {
         <>
             {/* Desktop */}
             <div className='hidden min-h-0 min-w-0 flex-1 flex-col lg:flex'>
-                <DetailHeader onBack={handleBack} />
+                <BackHeader label='BACK TO RESULTS' onBack={handleBack} />
                 <MovieDetailContent movieQuery={movieQuery} savedSet={savedSet} variant='desktop' />
             </div>
 
             {/* Mobile */}
             <div className='flex min-h-0 flex-1 flex-col lg:hidden'>
-                <MobileHeader onBack={handleBack} />
+                <MobileBackHeader label='BACK' onBack={handleBack} />
                 <MovieDetailContent movieQuery={movieQuery} savedSet={savedSet} variant='mobile' />
             </div>
         </>
-    );
-}
-
-function DetailHeader({ onBack }: { onBack: () => void }) {
-    return (
-        <header className='border-border bg-raised flex flex-none items-center gap-3.5 border-b px-7 py-3.5'>
-            <button
-                type='button'
-                onClick={onBack}
-                className='text-muted hover:text-text flex items-center gap-2 font-mono text-[11px] tracking-[0.02em]'
-            >
-                <ArrowLeftIcon className='size-4' /> BACK TO RESULTS
-            </button>
-        </header>
-    );
-}
-
-function MobileHeader({ onBack }: { onBack: () => void }) {
-    return (
-        <div className='border-border bg-raised flex flex-none items-center justify-between px-4 pt-11 pb-2.5'>
-            <button type='button' onClick={onBack} className='text-muted flex items-center gap-2 font-mono text-[11px]'>
-                <ArrowLeftIcon className='size-4' /> BACK
-            </button>
-        </div>
     );
 }
 
@@ -84,86 +62,97 @@ function MovieDetailContent({
     savedSet: Set<string> | undefined;
     variant: 'desktop' | 'mobile';
 }) {
-    if (movieQuery.isPending) {
-        return variant === 'desktop' ? <DesktopSkeleton /> : <MobileSkeleton />;
-    }
+    return (
+        <QueryState
+            query={movieQuery}
+            pending={variant === 'desktop' ? <DesktopSkeleton /> : <MobileSkeleton />}
+            errorPrefix='Could not load this film.'
+            errorClassName='p-7'
+        >
+            {(movie) => {
+                const poster = posterUrl(movie.posterPath, 'w500');
+                // `timeZone: 'UTC'` matters here: without it, `new Date('1994-07-14')`
+                // (parsed as UTC midnight) renders as the day before in any
+                // negative-UTC-offset timezone.
+                const releaseDate = formatIsoDate(movie.releaseDate, {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                    timeZone: 'UTC',
+                });
+                const isSaved = savedSet?.has(movie.tmdbId) ?? false;
+                const movieSummary = {
+                    tmdbId: movie.tmdbId,
+                    title: movie.title,
+                    posterPath: movie.posterPath ?? null,
+                    releaseYear: releaseYearOf(movie.releaseDate),
+                };
 
-    if (movieQuery.isError) {
-        return (
-            <p className='text-danger font-body p-7 text-sm' role='alert'>
-                Could not load this film. {movieQuery.error instanceof Error ? movieQuery.error.message : ''}
-            </p>
-        );
-    }
-
-    const movie = movieQuery.data;
-    const poster = posterUrl(movie.posterPath, 'w500');
-    const releaseDate = formatReleaseDate(movie.releaseDate);
-    const isSaved = savedSet?.has(movie.tmdbId) ?? false;
-    const movieSummary = {
-        tmdbId: movie.tmdbId,
-        title: movie.title,
-        posterPath: movie.posterPath ?? null,
-        releaseYear: releaseYearOf(movie.releaseDate),
-    };
-
-    if (variant === 'desktop') {
-        return (
-            <>
-                <div className='grid min-h-0 flex-1 grid-cols-[300px_1fr] gap-10 overflow-y-auto p-8'>
-                    <aside className='flex flex-col gap-3.5'>
-                        <Poster poster={poster} className='aspect-2/3' />
-                        <SaveButton movie={movieSummary} isSaved={isSaved} />
-                        <AddToListMenu movie={movieSummary} />
-                    </aside>
-                    <div className='flex min-w-0 flex-col gap-5'>
-                        <MovieHeading movie={movie} releaseDate={releaseDate} titleClassName='text-[36px]' />
-                        {movie.genres.length > 0 && (
-                            <div className='-mt-3 flex flex-wrap gap-1.75'>
-                                {movie.genres.map((genre) => (
-                                    <span
-                                        key={genre.id}
-                                        className='border-border text-muted rounded-xs border px-2 py-1 font-mono text-[10px] tracking-[0.06em]'
-                                    >
-                                        {genre.name.toUpperCase()}
-                                    </span>
-                                ))}
+                if (variant === 'desktop') {
+                    return (
+                        <div className='grid min-h-0 flex-1 grid-cols-[300px_1fr] gap-10 overflow-y-auto p-8'>
+                            <aside className='flex flex-col gap-3.5'>
+                                <Poster poster={poster} className='aspect-2/3' />
+                                <SaveControl movie={movieSummary} isSaved={isSaved} variant='button' />
+                                <AddToListMenu movie={movieSummary} />
+                            </aside>
+                            <div className='flex min-w-0 flex-col gap-5'>
+                                <MovieHeading movie={movie} releaseDate={releaseDate} titleClassName='text-[36px]' />
+                                {movie.genres.length > 0 && (
+                                    <div className='-mt-3 flex flex-wrap gap-1.75'>
+                                        {movie.genres.map((genre) => (
+                                            <span
+                                                key={genre.id}
+                                                className='border-border text-muted rounded-xs border px-2 py-1 font-mono text-[10px] tracking-[0.06em]'
+                                            >
+                                                {genre.name.toUpperCase()}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                                {movie.overview && (
+                                    <p className='font-body text-text max-w-160 text-base leading-relaxed text-pretty'>
+                                        {movie.overview}
+                                    </p>
+                                )}
+                                <CastSection cast={movie.cast} className='border-border border-t pt-4.5' />
                             </div>
-                        )}
+                        </div>
+                    );
+                }
+
+                return (
+                    <div className='min-h-0 flex-1 overflow-y-auto p-4'>
+                        <div className='flex gap-3.5'>
+                            <Poster poster={poster} className='aspect-2/3 w-29.5 flex-none' />
+                            <div className='flex min-w-0 flex-col gap-2'>
+                                <MovieHeading
+                                    movie={movie}
+                                    releaseDate={releaseDate}
+                                    titleClassName='text-[26px]'
+                                    compact
+                                />
+                                {movie.genres.length > 0 && (
+                                    <span className='text-muted text-xs'>
+                                        {movie.genres.map((genre) => genre.name).join(' · ')}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <div className='flex flex-col gap-2.5 pt-4'>
+                            <SaveControl movie={movieSummary} isSaved={isSaved} variant='button' />
+                            <AddToListMenu movie={movieSummary} />
+                        </div>
                         {movie.overview && (
-                            <p className='font-body text-text max-w-160 text-base leading-relaxed text-pretty'>
+                            <p className='font-body text-text pt-4 text-[15px] leading-relaxed text-pretty'>
                                 {movie.overview}
                             </p>
                         )}
-                        <CastSection cast={movie.cast} className='border-border border-t pt-4.5' />
+                        <CastSection cast={movie.cast} className='pt-4.5' />
                     </div>
-                </div>
-            </>
-        );
-    }
-
-    return (
-        <div className='min-h-0 flex-1 overflow-y-auto p-4'>
-            <div className='flex gap-3.5'>
-                <Poster poster={poster} className='aspect-2/3 w-29.5 flex-none' />
-                <div className='flex min-w-0 flex-col gap-2'>
-                    <MovieHeading movie={movie} releaseDate={releaseDate} titleClassName='text-[26px]' compact />
-                    {movie.genres.length > 0 && (
-                        <span className='text-muted text-xs'>
-                            {movie.genres.map((genre) => genre.name).join(' · ')}
-                        </span>
-                    )}
-                </div>
-            </div>
-            <div className='flex flex-col gap-2.5 pt-4'>
-                <SaveButton movie={movieSummary} isSaved={isSaved} />
-                <AddToListMenu movie={movieSummary} />
-            </div>
-            {movie.overview && (
-                <p className='font-body text-text pt-4 text-[15px] leading-relaxed text-pretty'>{movie.overview}</p>
-            )}
-            <CastSection cast={movie.cast} className='pt-4.5' />
-        </div>
+                );
+            }}
+        </QueryState>
     );
 }
 
@@ -265,23 +254,4 @@ function MobileSkeleton() {
             <div className='bg-raised h-20 w-full animate-pulse rounded-sm' />
         </div>
     );
-}
-
-// Formats an ISO date-only string ("1994-07-14") for display. `timeZone:
-// 'UTC'` matters here: without it, `new Date('1994-07-14')` (parsed as UTC
-// midnight) renders as the day before in any negative-UTC-offset timezone.
-function formatReleaseDate(releaseDate: string | null | undefined): string | null {
-    if (!releaseDate) {
-        return null;
-    }
-    const date = new Date(releaseDate);
-    if (Number.isNaN(date.getTime())) {
-        return null;
-    }
-    return new Intl.DateTimeFormat('en-US', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-        timeZone: 'UTC',
-    }).format(date);
 }

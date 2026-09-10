@@ -3,6 +3,7 @@ import { useWatchlists, type MyWatchlist } from '../../entities/watchlist/api/us
 import { RoleBadge } from '../../entities/watchlist/ui/role-badge';
 import { CreateWatchlistDialog } from '../../features/create-watchlist/ui/create-watchlist-dialog';
 import { formatRelativeTime } from '../../shared/lib/format-relative-time';
+import { QueryState } from '../../shared/ui/query-state';
 
 // docs/design/Watchlists.dc.html. Member avatars/count per row are dropped — see
 // entities/watchlist/api/use-watchlists.ts's own comment on why that data isn't
@@ -59,41 +60,35 @@ function summarizeRoles(watchlists: MyWatchlist[]): string {
 }
 
 function WatchlistsList({ watchlistsQuery }: { watchlistsQuery: ReturnType<typeof useWatchlists> }) {
-    if (watchlistsQuery.isPending) {
-        return (
-            <div className='flex flex-col gap-3.5'>
-                {Array.from({ length: 4 }, (_, i) => (
-                    <div key={i} className='border-border bg-raised h-24 animate-pulse rounded-sm border' />
-                ))}
-            </div>
-        );
-    }
-
-    if (watchlistsQuery.isError) {
-        return (
-            <p className='text-danger font-body text-sm' role='alert'>
-                Could not load watchlists. {watchlistsQuery.error instanceof Error ? watchlistsQuery.error.message : ''}
-            </p>
-        );
-    }
-
-    if (watchlistsQuery.data.length === 0) {
-        return (
-            <div className='border-border flex flex-col items-center gap-1.5 rounded-sm border border-dashed p-5.5'>
-                <span className='text-text font-body text-sm font-semibold'>
-                    Start a list, then add friends by @username
-                </span>
-                <span className='text-muted font-mono text-[11px]'>UP TO 20 MEMBERS PER LIST</span>
-            </div>
-        );
-    }
-
     return (
-        <div className='flex flex-col gap-3.5'>
-            {watchlistsQuery.data.map((watchlist) => (
-                <WatchlistRow key={watchlist.id} watchlist={watchlist} />
-            ))}
-        </div>
+        <QueryState
+            query={watchlistsQuery}
+            pending={
+                <div className='flex flex-col gap-3.5'>
+                    {Array.from({ length: 4 }, (_, i) => (
+                        <div key={i} className='border-border bg-raised h-24 animate-pulse rounded-sm border' />
+                    ))}
+                </div>
+            }
+            errorPrefix='Could not load watchlists.'
+            isEmpty={(data) => data.length === 0}
+            empty={
+                <div className='border-border flex flex-col items-center gap-1.5 rounded-sm border border-dashed p-5.5'>
+                    <span className='text-text font-body text-sm font-semibold'>
+                        Start a list, then add friends by @username
+                    </span>
+                    <span className='text-muted font-mono text-[11px]'>UP TO 20 MEMBERS PER LIST</span>
+                </div>
+            }
+        >
+            {(data) => (
+                <div className='flex flex-col gap-3.5'>
+                    {data.map((watchlist) => (
+                        <WatchlistRow key={watchlist.id} watchlist={watchlist} />
+                    ))}
+                </div>
+            )}
+        </QueryState>
     );
 }
 

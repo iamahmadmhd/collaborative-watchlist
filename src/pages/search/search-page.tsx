@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { MagnifyingGlassIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
+import { MagnifyingGlassIcon } from '@heroicons/react/24/solid';
 import { useSearchMovies } from '../../entities/movie/api/use-search-movies';
 import { posterUrl, type MovieSummary } from '../../entities/movie/model/movie';
 import { useSavedSet } from '../../features/save-movie/api/saved-movies';
-import { SaveToggleButton } from '../../features/save-movie/ui/save-toggle-button';
+import { SaveControl } from '../../features/save-movie/ui/save-control';
+import { PaginationControls } from '../../shared/ui/pagination-controls';
+import { QueryState } from '../../shared/ui/query-state';
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -91,9 +93,14 @@ export function SearchPage({
                     />
                     {hasQuery && moviesQuery.data && moviesQuery.data.totalPages > 1 && (
                         <PaginationControls
-                            moviesQuery={moviesQuery}
                             page={page}
+                            totalPages={moviesQuery.data.totalPages}
                             onPageChange={onPageChange}
+                            info={
+                                <span>
+                                    page {page} / {Math.max(moviesQuery.data.totalPages, 1)}
+                                </span>
+                            }
                             className='justify-end py-4'
                         />
                     )}
@@ -124,9 +131,14 @@ export function SearchPage({
                     />
                     {hasQuery && moviesQuery.data && moviesQuery.data.totalPages > 1 && (
                         <PaginationControls
-                            moviesQuery={moviesQuery}
                             page={page}
+                            totalPages={moviesQuery.data.totalPages}
                             onPageChange={onPageChange}
+                            info={
+                                <span>
+                                    page {page} / {Math.max(moviesQuery.data.totalPages, 1)}
+                                </span>
+                            }
                             className='justify-center px-4 py-5'
                         />
                     )}
@@ -214,47 +226,6 @@ function SearchResultsHeader({
     );
 }
 
-function PaginationControls({
-    moviesQuery,
-    page,
-    onPageChange,
-    className,
-}: {
-    moviesQuery: ReturnType<typeof useSearchMovies>;
-    page: number;
-    onPageChange: (page: number) => void;
-    className?: string;
-}) {
-    if (!moviesQuery.data) {
-        return null;
-    }
-    const { totalPages } = moviesQuery.data;
-
-    return (
-        <div className={`text-muted flex items-center gap-3 font-mono text-[11px] ${className ?? ''}`}>
-            <button
-                type='button'
-                onClick={() => onPageChange(Math.max(1, page - 1))}
-                disabled={page <= 1}
-                className='disabled:text-border enabled:hover:text-text -m-1.5 flex items-center p-1.5 disabled:cursor-not-allowed'
-            >
-                <ChevronLeftIcon className='size-4' /> prev
-            </button>
-            <span>
-                page {page} / {Math.max(totalPages, 1)}
-            </span>
-            <button
-                type='button'
-                onClick={() => onPageChange(page + 1)}
-                disabled={page >= totalPages}
-                className='disabled:text-border enabled:hover:text-text -m-1.5 flex items-center p-1.5 disabled:cursor-not-allowed'
-            >
-                next <ChevronRightIcon className='size-4' />
-            </button>
-        </div>
-    );
-}
-
 function SearchResultsList({
     moviesQuery,
     hasQuery,
@@ -272,45 +243,47 @@ function SearchResultsList({
         );
     }
 
-    if (moviesQuery.isPending) {
-        return (
-            <div className='border-border border-t'>
-                {Array.from({ length: 6 }, (_, i) => (
-                    <div key={i} className={`border-border flex items-center gap-4 border-b py-2.75 ${rowClassName}`}>
-                        <div className='bg-raised h-16.5 w-11 flex-none animate-pulse rounded-[1px]' />
-                        <div className='bg-raised h-4 flex-1 animate-pulse rounded-[1px]' />
-                    </div>
-                ))}
-            </div>
-        );
-    }
-
-    if (moviesQuery.isError) {
-        return (
-            <p className={`text-danger font-body text-sm ${rowClassName}`} role='alert'>
-                Could not search movies. {moviesQuery.error instanceof Error ? moviesQuery.error.message : ''}
-            </p>
-        );
-    }
-
-    // Same generated-nullability note as use-genres.ts's filter.
-    const movies = moviesQuery.data.results.filter((movie): movie is MovieSummary => movie != null);
-
-    if (movies.length === 0) {
-        return <p className={`text-muted font-body text-sm ${rowClassName}`}>No films found.</p>;
-    }
-
     return (
-        <div className='border-border border-t'>
-            {movies.map((movie) => (
-                <SearchResultRow
-                    key={movie.tmdbId}
-                    movie={movie}
-                    isSaved={savedSet?.has(movie.tmdbId) ?? false}
-                    rowClassName={rowClassName}
-                />
-            ))}
-        </div>
+        <QueryState
+            query={moviesQuery}
+            pending={
+                <div className='border-border border-t'>
+                    {Array.from({ length: 6 }, (_, i) => (
+                        <div
+                            key={i}
+                            className={`border-border flex items-center gap-4 border-b py-2.75 ${rowClassName}`}
+                        >
+                            <div className='bg-raised h-16.5 w-11 flex-none animate-pulse rounded-[1px]' />
+                            <div className='bg-raised h-4 flex-1 animate-pulse rounded-[1px]' />
+                        </div>
+                    ))}
+                </div>
+            }
+            errorPrefix='Could not search movies.'
+            errorClassName={rowClassName}
+        >
+            {(data) => {
+                // Same generated-nullability note as use-genres.ts's filter.
+                const movies = data.results.filter((movie): movie is MovieSummary => movie != null);
+
+                if (movies.length === 0) {
+                    return <p className={`text-muted font-body text-sm ${rowClassName}`}>No films found.</p>;
+                }
+
+                return (
+                    <div className='border-border border-t'>
+                        {movies.map((movie) => (
+                            <SearchResultRow
+                                key={movie.tmdbId}
+                                movie={movie}
+                                isSaved={savedSet?.has(movie.tmdbId) ?? false}
+                                rowClassName={rowClassName}
+                            />
+                        ))}
+                    </div>
+                );
+            }}
+        </QueryState>
     );
 }
 
@@ -328,7 +301,7 @@ function SearchResultRow({
     return (
         <div className={`border-border flex items-center gap-4 border-b py-2.75 ${rowClassName}`}>
             {/* FR-DISC-4's entry point from Search — same reasoning as movie-card.tsx:
-                SaveToggleButton stays outside the Link, not nested inside it. */}
+                SaveControl stays outside the Link, not nested inside it. */}
             <Link
                 to='/movie/$movieId'
                 params={{ movieId: movie.tmdbId }}
@@ -342,7 +315,7 @@ function SearchResultRow({
                     <span className='text-muted font-mono text-xs'>{movie.releaseYear ?? '—'}</span>
                 </div>
             </Link>
-            <SaveToggleButton movie={movie} isSaved={isSaved} />
+            <SaveControl movie={movie} isSaved={isSaved} variant='badge' />
         </div>
     );
 }

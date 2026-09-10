@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useCurrentUser } from '../../entities/member/api/use-current-user';
 import { useCurrentUserEmail } from '../../entities/member/api/use-current-user-email';
@@ -8,9 +7,10 @@ import { useSignOut } from '../../features/sign-out/api/sign-out';
 import { useDeleteAccount } from '../../features/delete-account/api/delete-account';
 import { ThemeToggle } from '../../shared/ui/theme-toggle';
 import { Button } from '../../shared/ui/button';
-import { DialogClose, DialogPopup, DialogRoot, DialogTrigger } from '../../shared/ui/dialog';
+import { ConfirmDialog } from '../../shared/ui/confirm-dialog';
 import { queryClient } from '../../shared/lib/query-client';
 import { CURRENT_USER_QUERY_KEY } from '../../entities/member/api/use-current-user';
+import { formatIsoDate } from '../../shared/lib/format-date';
 
 // docs/design/Settings.dc.html. No FR-LIST/FR-ITEM equivalent for this screen's own
 // existence — it's the aggregate home for FR-AUTH-5/6, FR-THEME-1..6, NFR-COMP-2, and
@@ -66,10 +66,8 @@ export function SettingsPage() {
 }
 
 function formatJoinedDate(joinedAt: string | null | undefined): string | null {
-    if (!joinedAt) return null;
-    const date = new Date(joinedAt);
-    if (Number.isNaN(date.getTime())) return null;
-    return `joined ${new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date)}`;
+    const formatted = formatIsoDate(joinedAt, { month: 'long', year: 'numeric' });
+    return formatted ? `joined ${formatted}` : null;
 }
 
 function Header({ joinedAt }: { joinedAt: string | null | undefined }) {
@@ -161,16 +159,9 @@ function AccountSection() {
 function SignOutRow() {
     const navigate = useNavigate();
     const signOut = useSignOut();
-    const [confirmOpen, setConfirmOpen] = useState(false);
 
     async function handleSignOut() {
         await signOut.mutateAsync(false);
-        await navigate({ to: '/get-started' });
-    }
-
-    async function handleSignOutEverywhere() {
-        await signOut.mutateAsync(true);
-        setConfirmOpen(false);
         await navigate({ to: '/get-started' });
     }
 
@@ -192,35 +183,20 @@ function SignOutRow() {
                         End every session, on every device signed in as you.
                     </span>
                 </div>
-                <DialogRoot open={confirmOpen} onOpenChange={setConfirmOpen}>
-                    <DialogTrigger
-                        render={
-                            <button
-                                type='button'
-                                className='text-danger font-mono text-[11px] tracking-[0.04em] uppercase'
-                            >
-                                Sign out everywhere
-                            </button>
-                        }
-                    />
-                    <DialogPopup
-                        title='Sign out everywhere?'
-                        description="You'll be signed out on every device, including this one, and need a fresh code to sign back in."
-                    >
-                        <div className='flex justify-end gap-3'>
-                            <DialogClose
-                                render={
-                                    <Button variant='secondary' type='button'>
-                                        Cancel
-                                    </Button>
-                                }
-                            />
-                            <Button type='button' isLoading={signOut.isPending} onClick={handleSignOutEverywhere}>
-                                Sign out everywhere
-                            </Button>
-                        </div>
-                    </DialogPopup>
-                </DialogRoot>
+                <ConfirmDialog
+                    trigger={
+                        <button type='button' className='text-danger font-mono text-[11px] tracking-[0.04em] uppercase'>
+                            Sign out everywhere
+                        </button>
+                    }
+                    title='Sign out everywhere?'
+                    description="You'll be signed out on every device, including this one, and need a fresh code to sign back in."
+                    confirmLabel='Sign out everywhere'
+                    onConfirm={async () => {
+                        await signOut.mutateAsync(true);
+                        await navigate({ to: '/get-started' });
+                    }}
+                />
             </div>
         </div>
     );
@@ -230,22 +206,12 @@ function SignOutRow() {
 // pattern for a destructive action, per CLAUDE.md/NFR-USE-3) — the difference here is a
 // mutation that can fail partway through (delete-account/handler.ts touches seven
 // tables) and needs to say so rather than leaving the member staring at a dialog that
-// silently closed. On failure the dialog stays open with the error shown; retrying is
-// just submitting again — see useDeleteAccount's own comment on why that's safe.
+// silently closed. ConfirmDialog's own try/catch already keeps the dialog open with the
+// error shown on failure; retrying is just submitting again — see useDeleteAccount's own
+// comment on why that's safe.
 function DeleteAccountRow() {
     const navigate = useNavigate();
     const deleteAccount = useDeleteAccount();
-    const [confirmOpen, setConfirmOpen] = useState(false);
-
-    async function handleDelete() {
-        try {
-            await deleteAccount.mutateAsync();
-            setConfirmOpen(false);
-            await navigate({ to: '/get-started' });
-        } catch {
-            // Left open deliberately — see file header comment above.
-        }
-    }
 
     return (
         <div className='flex items-center gap-4'>
@@ -256,39 +222,21 @@ function DeleteAccountRow() {
                     can&apos;t be undone.
                 </span>
             </div>
-            <DialogRoot open={confirmOpen} onOpenChange={setConfirmOpen}>
-                <DialogTrigger
-                    render={
-                        <button type='button' className='text-danger font-mono text-[11px] tracking-[0.04em] uppercase'>
-                            Delete account
-                        </button>
-                    }
-                />
-                <DialogPopup
-                    title='Delete your account?'
-                    description="This permanently deletes your profile, saved films, and watched records. Any watchlist you own is deleted for every collaborator on it — lists you've joined but don't own, you'll simply leave. This can't be undone."
-                >
-                    <div className='flex flex-col gap-3'>
-                        {deleteAccount.isError && (
-                            <p role='alert' className='font-body text-danger text-sm'>
-                                Could not delete your account. Please try again.
-                            </p>
-                        )}
-                        <div className='flex justify-end gap-3'>
-                            <DialogClose
-                                render={
-                                    <Button variant='secondary' type='button'>
-                                        Cancel
-                                    </Button>
-                                }
-                            />
-                            <Button type='button' isLoading={deleteAccount.isPending} onClick={handleDelete}>
-                                Delete account
-                            </Button>
-                        </div>
-                    </div>
-                </DialogPopup>
-            </DialogRoot>
+            <ConfirmDialog
+                trigger={
+                    <button type='button' className='text-danger font-mono text-[11px] tracking-[0.04em] uppercase'>
+                        Delete account
+                    </button>
+                }
+                title='Delete your account?'
+                description="This permanently deletes your profile, saved films, and watched records. Any watchlist you own is deleted for every collaborator on it — lists you've joined but don't own, you'll simply leave. This can't be undone."
+                confirmLabel='Delete account'
+                fallbackErrorMessage='Could not delete your account. Please try again.'
+                onConfirm={async () => {
+                    await deleteAccount.mutateAsync();
+                    await navigate({ to: '/get-started' });
+                }}
+            />
         </div>
     );
 }

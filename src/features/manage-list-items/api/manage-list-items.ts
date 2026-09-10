@@ -1,10 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
 import { watchlistItemsQueryKey } from '../../../entities/watchlist/api/watchlist-items';
 import type { WatchlistItemRecord } from '../../../entities/watchlist/model/watchlist';
 import type { MovieSummary } from '../../../entities/movie/model/movie';
 import { rankAfter } from '../../../shared/lib/fractional-rank';
+import { useOptimisticMutation } from '../../../shared/lib/use-optimistic-mutation';
 
 function membershipQueryKey(watchlistId: string, tmdbId: string) {
     return ['watchlist-item-membership', watchlistId, tmdbId];
@@ -51,18 +52,18 @@ export function useIsMovieInWatchlist(watchlistId: string, tmdbId: string, enabl
 }
 
 // FR-ITEM-1 (add) / FR-ITEM-3 (remove), one mutation toggling the same
-// membership point-read cache (§7.2's optimistic onMutate/onError/onSettled,
-// mirrored from features/save-movie's useToggleSave). Deliberately does NOT
-// hand-patch entities/watchlist's watchlistItemsQueryKey cache: if /lists/:id
-// happens to be open for this same list in another tab, the real-time
-// subscription already wired into useWatchlistItems (§2.4) picks up this
-// create/delete on its own — patching both caches here would just be a second,
-// racier path to the same result.
+// membership point-read cache (§7.2's optimistic update, via
+// shared/lib/use-optimistic-mutation.ts — the query key here depends on which
+// movie was toggled, which is exactly the per-variables key case that helper
+// exists for). Deliberately does NOT hand-patch entities/watchlist's
+// watchlistItemsQueryKey cache: if /lists/:id happens to be open for this same
+// list in another tab, the real-time subscription already wired into
+// useWatchlistItems (§2.4) picks up this create/delete on its own — patching
+// both caches here would just be a second, racier path to the same result.
 export function useToggleListItem(watchlistId: string) {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: async ({ movie, isMember }: { movie: MovieSummary; isMember: boolean }) => {
+    return useOptimisticMutation<{ movie: MovieSummary; isMember: boolean }, boolean>({
+        queryKey: ({ movie }) => membershipQueryKey(watchlistId, movie.tmdbId),
+        mutationFn: async ({ movie, isMember }) => {
             if (isMember) {
                 const { errors } = await client.models.WatchlistItem.delete({ watchlistId, tmdbId: movie.tmdbId });
                 if (errors?.length) {
@@ -95,21 +96,7 @@ export function useToggleListItem(watchlistId: string) {
                 throw new Error(errors[0]?.message ?? 'Could not add this film to the list.');
             }
         },
-        onMutate: async ({ movie, isMember }) => {
-            const queryKey = membershipQueryKey(watchlistId, movie.tmdbId);
-            await queryClient.cancelQueries({ queryKey });
-            const previous = queryClient.getQueryData<boolean>(queryKey);
-            queryClient.setQueryData<boolean>(queryKey, !isMember);
-            return { previous, queryKey };
-        },
-        onError: (_err, _vars, context) => {
-            if (context) {
-                queryClient.setQueryData(context.queryKey, context.previous);
-            }
-        },
-        onSettled: (_data, _err, { movie }) => {
-            void queryClient.invalidateQueries({ queryKey: membershipQueryKey(watchlistId, movie.tmdbId) });
-        },
+        optimisticUpdate: (_previous, { isMember }) => !isMember,
     });
 }
 
@@ -118,31 +105,14 @@ export function useToggleListItem(watchlistId: string) {
 // mutates entities/watchlist's own watchlistItemsQueryKey list directly
 // (§7.2) rather than a separate membership flag.
 export function useRemoveListItem(watchlistId: string) {
-    const queryClient = useQueryClient();
-    const queryKey = watchlistItemsQueryKey(watchlistId);
-
-    return useMutation({
-        mutationFn: async (tmdbId: string) => {
+    return useOptimisticMutation<string, WatchlistItemRecord[]>({
+        queryKey: () => watchlistItemsQueryKey(watchlistId),
+        mutationFn: async (tmdbId) => {
             const { errors } = await client.models.WatchlistItem.delete({ watchlistId, tmdbId });
             if (errors?.length) {
                 throw new Error(errors[0]?.message ?? 'Could not remove this film from the list.');
             }
         },
-        onMutate: async (tmdbId) => {
-            await queryClient.cancelQueries({ queryKey });
-            const previous = queryClient.getQueryData<WatchlistItemRecord[]>(queryKey);
-            queryClient.setQueryData<WatchlistItemRecord[]>(queryKey, (old) =>
-                (old ?? []).filter((item) => item.tmdbId !== tmdbId),
-            );
-            return { previous };
-        },
-        onError: (_err, _tmdbId, context) => {
-            if (context?.previous) {
-                queryClient.setQueryData(queryKey, context.previous);
-            }
-        },
-        onSettled: () => {
-            void queryClient.invalidateQueries({ queryKey });
-        },
+        optimisticUpdate: (previous, tmdbId) => (previous ?? []).filter((item) => item.tmdbId !== tmdbId),
     });
 }

@@ -1,8 +1,7 @@
 import type { AppSyncIdentityCognito, AppSyncResolverHandler } from 'aws-lambda';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type { Schema } from '../../data/resource';
-import { conditionalCheckFailedAt } from '../shared/transact-write-errors';
 
 // membership — System Design §4.2, §4.4, §4.5
 //
@@ -74,6 +73,13 @@ interface WatchlistRecord {
 async function getWatchlist(watchlistId: string): Promise<WatchlistRecord | null> {
     const { Item } = await docClient.send(new GetCommand({ TableName: WATCHLIST_TABLE, Key: { id: watchlistId } }));
     return (Item as WatchlistRecord | undefined) ?? null;
+}
+
+function conditionalCheckFailedAt(err: unknown, index: number): boolean {
+    return (
+        err instanceof TransactionCanceledException &&
+        err.CancellationReasons?.[index]?.Code === 'ConditionalCheckFailed'
+    );
 }
 
 async function addMember(args: AddMemberArgs, callerId: string): Promise<AddMemberResult> {

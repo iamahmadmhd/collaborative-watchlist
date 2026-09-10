@@ -1,16 +1,17 @@
 import { Link } from '@tanstack/react-router';
 import type { ShellSection } from './shell-sidebar';
+import { BookmarkIcon, CogIcon, MagnifyingGlassIcon, QueueListIcon } from '@heroicons/react/24/solid';
 
 // Reuses ShellSidebar's section type (rather than its own wider union, as before
 // Settings existed) — both nav chrome pieces now agree on the same four
 // destinations, matching AppShell passing one `active` value to both.
 export type TabSection = ShellSection;
 
-const TABS: { label: string; section: TabSection; to: string }[] = [
-    { label: 'DISCOVER', section: 'Discover', to: '/discover' },
-    { label: 'SAVED', section: 'Saved', to: '/saved' },
-    { label: 'LISTS', section: 'Watchlists', to: '/lists' },
-    { label: 'YOU', section: 'Settings', to: '/settings' },
+const TABS: { label: string; section: TabSection; to: string; icon: typeof MagnifyingGlassIcon }[] = [
+    { label: 'DISCOVER', section: 'Discover', to: '/discover', icon: MagnifyingGlassIcon },
+    { label: 'SAVED', section: 'Saved', to: '/saved', icon: BookmarkIcon },
+    { label: 'LISTS', section: 'Watchlists', to: '/lists', icon: QueueListIcon },
+    { label: 'Settings', section: 'Settings', to: '/settings', icon: CogIcon },
 ];
 
 // docs/design/Tab Bar.dc.html, verbatim — mobile-only bottom nav.
@@ -21,7 +22,7 @@ export function TabBar({ active, className }: { active: TabSection; className?: 
                 const isActive = tab.section === active;
                 const content = (
                     <>
-                        <div className={`h-2.25 w-2.25 rounded-[1px] ${isActive ? 'bg-accent' : 'bg-border'}`} />
+                        <tab.icon className={`size-6 ${isActive ? 'text-accent' : 'text-muted'}`} />
                         <span
                             className={`font-mono text-[9px] tracking-[0.06em] ${isActive ? 'text-accent' : 'text-muted'}`}
                         >

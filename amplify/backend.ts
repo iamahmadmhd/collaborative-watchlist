@@ -17,6 +17,7 @@ import { imageProxy } from './functions/image-proxy/resource';
 import { membership } from './functions/membership/resource';
 import { permissionFanout } from './functions/permission-fanout/resource';
 import { deleteAccount } from './functions/delete-account/resource';
+import { watchlistItem } from './functions/watchlist-item/resource';
 
 const backend = defineBackend({
     auth,
@@ -28,6 +29,7 @@ const backend = defineBackend({
     membership,
     permissionFanout,
     deleteAccount,
+    watchlistItem,
 });
 
 // System Design §5.5, ADR-007. Plain CDK, not an Amplify Data model — TmdbCache must
@@ -88,10 +90,20 @@ const imageProxyFunctionUrl = imageProxyLambda.addFunctionUrl({
     invokeMode: lambda.InvokeMode.BUFFERED,
 });
 
-// FunctionUrlOrigin.withOriginAccessControl both creates the OAC and grants
-// CloudFront (scoped to this specific distribution's ARN) lambda:InvokeFunctionUrl —
-// no separate permission statement needed here (verified against the construct's own
-// bind(), which adds that CfnPermission itself).
+// FunctionUrlOrigin.withOriginAccessControl creates the OAC and adds a CfnPermission
+// for lambda:InvokeFunctionUrl itself (its own bind() does that) — but that grant alone
+// is NOT sufficient: CloudFront's signed origin request to a Function URL is rejected
+// with 403 until the function also allows lambda:InvokeFunction from the CloudFront
+// service principal. Confirmed the hard way against a real deployment. The explicit
+// addPermission below is therefore required, not redundant with the construct's grant;
+// it is scoped by sourceArn to this one distribution so it isn't a blanket
+// "any CloudFront distribution may invoke this function" grant.
+//
+// errorResponses sets CloudFront's Error Caching Minimum TTL per status. Without it
+// CloudFront caches a 404 for 10 seconds by default, so every repeat request for an
+// image TMDB doesn't have re-invokes this Lambda and re-hits image.tmdb.org —
+// handler.ts deliberately does not persist a failure to S3, so the origin has no
+// memory of its own. 502 is kept short: that one IS transient.
 const imageCdn = new cloudfront.Distribution(imageProxyStack, 'ImageCdn', {
     comment: 'TMDB image cache/proxy (System Design §5.1 extension, FR-TMDB-4)',
     defaultBehavior: {
@@ -100,13 +112,44 @@ const imageCdn = new cloudfront.Distribution(imageProxyStack, 'ImageCdn', {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
     },
+    errorResponses: [
+        { httpStatus: 404, ttl: Duration.minutes(10) },
+        { httpStatus: 502, ttl: Duration.seconds(30) },
+    ],
 });
 
 imageProxyLambda.addPermission('AllowCloudFrontInvokeFunction', {
     principal: new iam.ServicePrincipal('cloudfront.amazonaws.com'),
     action: 'lambda:InvokeFunction',
-    sourceArn: `arn:aws:cloudfront::${Stack.of(imageProxyStack).account}:distribution/${imageCdn.distributionId}`,
+    sourceArn: `arn:aws:cloudfront::${imageProxyStack.account}:distribution/${imageCdn.distributionId}`,
 });
+
+// NFR-SEC-3 / V-10, UNRESOLVED — flagged, not silently answered. This distribution is
+// the app's one publicly reachable, unauthenticated surface: no Cognito token, no WAF,
+// no per-principal throttle. V-10 as written ("Every TMDB-backed operation rejects an
+// unauthenticated caller at the API layer") and NFR-SEC-3's "authentication endpoints,
+// as the only remaining unauthenticated surface" both predate FR-TMDB-8, and v1.6
+// amended neither — so either those two need a carve-out for opaque public artwork
+// (defensible: no user data crosses this path) or this surface needs closing. That is a
+// requirements decision, not one to make here.
+//
+// What IS applied here regardless of how that lands, because it is correct either way:
+// a reserved-concurrency ceiling. A flood of well-formed but nonexistent image paths
+// (the pattern in handler.ts admits any [a-zA-Z0-9]+ hash, and each one is a distinct
+// CloudFront cache key, so edge caching does not absorb it) would otherwise scale
+// one-to-one into Lambda invocations and outbound image.tmdb.org requests — the exact
+// quota exhaustion NFR-SEC-3 exists to prevent. This caps that at 25 concurrent
+// executions AND guarantees image-proxy those 25, so the reverse failure — a flood here
+// consuming the account's unreserved pool and starving membership, tmdb-proxy or
+// delete-account — can't happen either.
+//
+// A WAF rate-based rule is the missing piece and is deliberately NOT added here: a
+// WAFv2 ACL for CloudFront must be created with scope CLOUDFRONT in us-east-1, and
+// Amplify Gen 2 gives no way to place a stack in a different region from the rest of
+// the backend (backend.createStack() is a nested stack, same region). Adding one from
+// this file would break `ampx sandbox`/deploy outright for any app not already in
+// us-east-1. It needs a separate us-east-1 stack wired by ACL ARN.
+backend.imageProxy.resources.cfnResources.cfnFunction.reservedConcurrentExecutions = 25;
 
 // Consumed by src/shared/config/image-cdn.ts, mirroring how amplify_outputs.json
 // already carries every other frontend-facing backend value — no new frontend config
@@ -215,6 +258,27 @@ deleteAccountLambda.addToRolePolicy(
 (deleteAccountLambda as lambda.Function).addEnvironment('WATCH_STATUS_TABLE_NAME', watchStatusTable.tableName);
 (deleteAccountLambda as lambda.Function).addEnvironment('USER_PROFILE_TABLE_NAME', userProfileTable.tableName);
 (deleteAccountLambda as lambda.Function).addEnvironment('USERNAME_TABLE_NAME', usernameTable.tableName);
+
+// FR-ITEM-1, ADR-001. watchlist-item reads the parent Watchlist before creating an
+// item, so it can stamp editors/viewers from the authoritative row rather than from
+// the request (see that function's resource.ts). GetItem only — its write goes back
+// through AppSync under the schema-level allow.resource() grant, not through this
+// table reference, because that is what publishes the subscription event /lists/:id
+// depends on (§2.4).
+const watchlistItemLambda = backend.watchlistItem.resources.lambda;
+watchlistTable.grant(watchlistItemLambda, 'dynamodb:GetItem');
+(watchlistItemLambda as lambda.Function).addEnvironment('WATCHLIST_TABLE_NAME', watchlistTable.tableName);
+
+// FR-AUTH-4 / NFR-SEC-7. claim-username reads UserProfile and writes UserProfile.username
+// directly rather than through the generated resolvers — that field carries its own
+// field-level authorization rule (data/resource.ts) so that no member can rewrite their
+// own handle, and allow.resource() has no field-level form to exempt this function from
+// it. Same intra-stack situation as membership/delete-account above: claim-username is
+// already resourceGroupName: 'data', so granting it a data-stack table is not a
+// cross-stack edge. Its Username.create()/delete() calls still go over AppSync.
+const claimUsernameLambda = backend.claimUsername.resources.lambda;
+userProfileTable.grant(claimUsernameLambda, 'dynamodb:GetItem', 'dynamodb:UpdateItem');
+(claimUsernameLambda as lambda.Function).addEnvironment('USER_PROFILE_TABLE_NAME', userProfileTable.tableName);
 
 // Deliberately NOT done: granting userProfileTable directly to postConfirmationLambda
 // (post-confirmation is grouped into the AUTH stack, not this one — resource.ts's own

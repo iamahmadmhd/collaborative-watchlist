@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
 import { watchlistItemsQueryKey } from '../../../entities/watchlist/api/watchlist-items';
 import type { WatchlistItemRecord } from '../../../entities/watchlist/model/watchlist';
@@ -11,28 +10,35 @@ function membershipQueryKey(watchlistId: string, tmdbId: string) {
     return ['watchlist-item-membership', watchlistId, tmdbId];
 }
 
-// FR-ITEM-1/FR-ITEM-4: a new item needs the parent's current ownerId/editors/
-// viewers to stamp onto itself (§4.4, ADR-001 — permission-fanout/handler.ts's
-// header explains why ownerId must be folded into `editors` here, not just
-// copied verbatim) and the current last position to append after (ADR-006).
-// Read fresh via the API rather than the TanStack Query cache: this mutation
-// is reachable from the movie-detail "add to list" menu, which may run before
-// /lists/:id has ever been opened for this particular list, so neither
-// entities/watchlist cache entry is guaranteed to exist yet.
-async function loadWatchlistContext(watchlistId: string) {
-    const [{ data: watchlist }, { data: items }] = await Promise.all([
-        client.models.Watchlist.get({ id: watchlistId }),
-        client.models.WatchlistItem.list({ watchlistId }),
-    ]);
-    if (!watchlist) {
-        throw new Error('This watchlist no longer exists.');
-    }
-    const lastPosition = items.reduce<string | null>(
+// FR-ITEM-4 (ADR-006): a new item appends after the current last position.
+// Read fresh via the API rather than the TanStack Query cache — this mutation is
+// reachable from the movie-detail "add to list" menu, which may run before
+// /lists/:id has ever been opened for this particular list, so the
+// entities/watchlist cache entry is not guaranteed to exist yet.
+//
+// The parent's ownerId/editors/viewers are NOT read here any more. They used to
+// be, so the client could stamp them onto the new item (ADR-001's denormalised
+// arrays) — which meant the permission arrays on a brand-new item were whatever
+// the caller sent, and the generated create resolver had no way to check them
+// against the parent. addWatchlistItem's handler reads the Watchlist server-side
+// and stamps them itself (§4.4, NFR-SEC-1); nothing about them belongs on this
+// side of the wire.
+async function loadLastPosition(watchlistId: string): Promise<string | null> {
+    const { data: items } = await client.models.WatchlistItem.list({ watchlistId });
+    return items.reduce<string | null>(
         (max, item) => (max === null || item.position > max ? item.position : max),
         null,
     );
-    return { watchlist, lastPosition };
 }
+
+// addWatchlistItem returns a typed rejection rather than a GraphQL error string,
+// the same shape as the membership mutations (System Design §2.5's reasoning: the
+// client should not have to parse error text to tell these apart).
+const ADD_ITEM_ERRORS: Record<string, string> = {
+    NOT_FOUND: 'This watchlist no longer exists.',
+    NOT_ALLOWED: 'You do not have permission to add films to this list.',
+    ALREADY_IN_LIST: 'That film is already on this list.',
+};
 
 // Backs the add-to-list menu's per-row checked state (FR-ITEM-2's own
 // enforcement is the composite-key conditional write on create — this is
@@ -72,28 +78,26 @@ export function useToggleListItem(watchlistId: string) {
                 return;
             }
 
-            const [{ userId }, { watchlist, lastPosition }] = await Promise.all([
-                getCurrentUser(),
-                loadWatchlistContext(watchlistId),
-            ]);
+            const lastPosition = await loadLastPosition(watchlistId);
 
-            const { errors } = await client.models.WatchlistItem.create({
+            // addedBy/addedAt are stamped server-side from the caller's own token,
+            // so they are not sent — nor are editors/viewers (see loadLastPosition).
+            const { data, errors } = await client.mutations.addWatchlistItem({
                 watchlistId,
                 tmdbId: movie.tmdbId,
                 title: movie.title,
                 posterPath: movie.posterPath ?? null,
                 releaseYear: movie.releaseYear ?? null,
-                addedBy: userId,
-                addedAt: new Date().toISOString(),
                 position: rankAfter(lastPosition),
-                editors: [watchlist.ownerId, ...(watchlist.editors ?? [])],
-                viewers: watchlist.viewers ?? [],
             });
-            // FR-ITEM-2's actual enforcement is the composite key's implicit
-            // attribute_not_exists condition (§5.1) — a duplicate add surfaces here
-            // as a generic AppSync conditional-check error, not a typed result.
-            if (errors?.length) {
-                throw new Error(errors[0]?.message ?? 'Could not add this film to the list.');
+            if (errors?.length || !data) {
+                throw new Error(errors?.[0]?.message ?? 'Could not add this film to the list.');
+            }
+            // FR-ITEM-2's actual enforcement is still the composite key's implicit
+            // attribute_not_exists condition (§5.1); the handler just maps that
+            // conditional-check failure to ALREADY_IN_LIST on its way back.
+            if (!data.success) {
+                throw new Error((data.error && ADD_ITEM_ERRORS[data.error]) ?? 'Could not add this film to the list.');
             }
         },
         optimisticUpdate: (_previous, { isMember }) => !isMember,

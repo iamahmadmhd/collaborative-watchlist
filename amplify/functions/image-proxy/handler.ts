@@ -53,6 +53,15 @@ function contentTypeFor(imagePath: string): string {
 // hit as immutable for a long time rather than re-validating.
 const CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
+// Negative responses carry their own, much shorter cache directive. Nothing is written
+// to S3 on a miss-then-failure (see the handler), so without this the origin has no
+// memory of a bad path at all and every repeat request re-invokes this function and
+// re-hits image.tmdb.org. Ten minutes is long enough to absorb a page full of repeats
+// and short enough that a poster TMDB adds later appears without a deploy. CloudFront's
+// own Error Caching Minimum TTL is set to match in backend.ts — both, because the two
+// are configured independently and only the pair covers edge and browser alike.
+const CACHE_CONTROL_NEGATIVE = 'public, max-age=600';
+
 function imageResponse(body: Uint8Array, contentType: string) {
     return {
         statusCode: 200,
@@ -62,10 +71,18 @@ function imageResponse(body: Uint8Array, contentType: string) {
     };
 }
 
+function notFoundResponse() {
+    return {
+        statusCode: 404,
+        headers: { 'cache-control': CACHE_CONTROL_NEGATIVE },
+        body: 'Not found',
+    };
+}
+
 export const handler: LambdaFunctionURLHandler = async (event) => {
     const parsed = parseRequestPath(event.rawPath);
     if (!parsed) {
-        return { statusCode: 404, body: 'Not found' };
+        return notFoundResponse();
     }
     const { size, imagePath, s3Key } = parsed;
 
@@ -81,9 +98,17 @@ export const handler: LambdaFunctionURLHandler = async (event) => {
 
     const upstream = await fetch(`https://image.tmdb.org/t/p/${size}${imagePath}`);
     if (!upstream.ok) {
-        // Not cached in S3 — a missing/removed TMDB image is not this proxy's problem to
-        // remember, so the failure isn't written to the cache.
-        return { statusCode: upstream.status === 404 ? 404 : 502, body: 'Image unavailable' };
+        // Still not written to S3 — a missing/removed TMDB image is not this proxy's
+        // problem to remember durably. The short cache-control above (and CloudFront's
+        // matching error TTL) is what keeps a repeat request for the same bad path off
+        // both this function and image.tmdb.org, without a tombstone object to expire.
+        if (upstream.status === 404) {
+            return notFoundResponse();
+        }
+        // A 5xx from TMDB is transient; caching it for ten minutes would turn a blip
+        // into an outage, so this one gets no cache-control of its own (backend.ts
+        // caps it at CloudFront's 30-second error TTL).
+        return { statusCode: 502, body: 'Image unavailable' };
     }
     const contentType = upstream.headers.get('content-type') ?? contentTypeFor(imagePath);
     const bytes = new Uint8Array(await upstream.arrayBuffer());

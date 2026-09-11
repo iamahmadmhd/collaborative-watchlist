@@ -12,6 +12,12 @@ import { defineFunction } from '@aws-amplify/backend';
 // CloudformationStackCircularDependencyError between it and the data stack.
 // postConfirmation hits the same shape (§ its own resource.ts) via 'auth'
 // instead, for the equivalent reason (Cognito trigger + allow.resource()).
+// USER_PROFILE_TABLE_NAME is deliberately NOT declared here, for the same reason
+// membership/resource.ts documents for its own table names: this function reads
+// UserProfile and writes UserProfile.username over the raw DynamoDB SDK (handler.ts
+// explains why that field can't go through AppSync), so the table name and its IAM
+// grant can only be wired in amplify/backend.ts once backend.data's tables exist.
+// It is read via process.env rather than the typed $amplify/env import.
 export const claimUsername = defineFunction({
     name: 'claim-username',
     resourceGroupName: 'data',

@@ -178,9 +178,27 @@ const schema = a
                 // needs no GraphQL write path at all. It previously had none of its own
                 // rules and so inherited the model-level Editor `update` grant, letting
                 // any Editor set the list's film count to whatever they liked.
+                //
+                // .default(0) is deliberately GONE, and its absence is load-bearing:
+                // field-level authorization is checked against the mutation's WRITE SET,
+                // and a default puts the field in that write set even when the caller
+                // never mentions it. With `create` granted to nobody, every
+                // Watchlist.create() therefore failed with "Unauthorized on [itemCount]"
+                // — the field the client had not sent and could not have sent. (editors
+                // and viewers carry the identical rule and are fine precisely because
+                // they have no default: a field absent from the write set is never
+                // checked. ownerId is fine because it holds a `create` grant.)
+                //
+                // Granting `create` here would have fixed the error too, but would let an
+                // Owner seed an arbitrary opening count; dropping the default keeps the
+                // field unwritable by anyone over GraphQL, which is the whole point.
+                // Nothing depends on the 0: DynamoDB's ADD treats a missing number
+                // attribute as 0, so permission-fanout's `ADD itemCount :delta` still
+                // reads 1 after the first item lands, and both client readers already
+                // coalesce (`watchlist.itemCount ?? 0` — entities/watchlist's
+                // use-watchlists and the watchlist-detail header).
                 itemCount: a
                     .integer()
-                    .default(0)
                     .authorization((allow) => [
                         allow.ownerDefinedIn('ownerId').identityClaim('sub').to(['read']),
                         allow.ownersDefinedIn('editors').to(['read']),

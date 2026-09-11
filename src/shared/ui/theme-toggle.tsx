@@ -66,9 +66,12 @@ export function ThemeToggle({ variant, className }: { variant: 'cards' | 'segmen
                         role='radio'
                         aria-checked={active}
                         onClick={() => setPreference(option.value)}
-                        className={`bg-raised focus-visible:outline-accent overflow-hidden rounded-[4px] border text-left focus-visible:outline-2 focus-visible:outline-offset-2 ${active ? 'border-accent' : 'border-border'}`}
+                        className={`bg-raised focus-visible:outline-accent overflow-hidden rounded-sm border text-left focus-visible:outline-2 focus-visible:outline-offset-2 ${active ? 'border-accent' : 'border-border'}`}
                     >
-                        <div className='flex h-19 flex-col justify-center gap-1.5 p-2.75' style={{ background: option.previewBg }}>
+                        <div
+                            className='flex h-19 flex-col justify-center gap-1.5 p-2.75'
+                            style={{ background: option.previewBg }}
+                        >
                             {option.bars.map((bar, i) => (
                                 <div
                                     key={i}
@@ -81,7 +84,9 @@ export function ThemeToggle({ variant, className }: { variant: 'cards' | 'segmen
                             <span
                                 className={`h-3.5 w-3.5 flex-none rounded-full border-[1.5px] ${active ? 'border-accent bg-accent' : 'border-border bg-transparent'}`}
                             />
-                            <span className={`text-text text-[13px] ${active ? 'font-semibold' : ''}`}>{option.label}</span>
+                            <span className={`text-text text-[13px] ${active ? 'font-semibold' : ''}`}>
+                                {option.label}
+                            </span>
                         </div>
                     </button>
                 );

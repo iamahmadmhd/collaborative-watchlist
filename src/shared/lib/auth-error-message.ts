@@ -1,7 +1,8 @@
 // Cognito error `.name` values are stable identifiers (e.g. UsernameExistsException) —
 // mapped to member-facing copy where a friendlier message helps; everything else
 // falls back to Cognito's own message rather than swallowing detail. Shared across
-// the auth pages slice since every form hits the same error surface.
+// the auth pages slice since every form hits the same error surface, and per
+// ADR-011 a future Settings recovery path is expected to need it too.
 export function authErrorMessage(err: unknown): string {
     if (err instanceof Error) {
         switch (err.name) {

@@ -22,26 +22,42 @@ export function EditProfileForm({ currentDisplayName }: { currentDisplayName: st
         register,
         handleSubmit,
         reset,
+        setError,
         formState: { errors, isSubmitting, isDirty },
     } = useForm<FormValues>({ resolver: zodResolver(schema), values: { displayName: currentDisplayName ?? '' } });
 
     const onSubmit = handleSubmit(async ({ displayName }) => {
-        await updateDisplayName.mutateAsync(displayName);
-        reset({ displayName });
+        try {
+            await updateDisplayName.mutateAsync(displayName);
+            reset({ displayName });
+        } catch {
+            // Previously silent: a rejected update left the form dirty with no
+            // feedback at all, which is why this looked like the save "just didn't
+            // stick" rather than a failure. See edit-profile/api/edit-profile.ts.
+            setError('root', { message: 'Could not save your display name. Please try again.' });
+        }
     });
 
     return (
-        <form onSubmit={onSubmit} noValidate className='flex items-end gap-2.5'>
-            <TextField
-                label='Display name'
-                autoComplete='name'
-                className='flex-1'
-                errorMessage={errors.displayName?.message}
-                {...register('displayName')}
-            />
-            <Button type='submit' variant='secondary' isLoading={isSubmitting} disabled={!isDirty} className='h-11'>
-                Save
-            </Button>
+        <form onSubmit={onSubmit} noValidate className='flex flex-col gap-1.5'>
+            <div className='flex items-end justify-between gap-2.5'>
+                <TextField
+                    label='Display Name'
+                    autoComplete='name'
+                    rootClassName='flex-1'
+                    labelClassName='text-text text-[15px] font-semibold font-body capitalize tracking-tight'
+                    errorMessage={errors.displayName?.message}
+                    {...register('displayName')}
+                />
+                <Button type='submit' variant='secondary' isLoading={isSubmitting} disabled={!isDirty}>
+                    Save
+                </Button>
+            </div>
+            {errors.root?.message && (
+                <p role='alert' className='font-body text-danger text-sm'>
+                    {errors.root.message}
+                </p>
+            )}
         </form>
     );
 }

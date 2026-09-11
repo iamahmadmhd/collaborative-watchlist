@@ -2,6 +2,8 @@ import type { AppSyncIdentityCognito, AppSyncResolverHandler } from 'aws-lambda'
 import { Amplify } from 'aws-amplify';
 import { generateClient } from 'aws-amplify/api';
 import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtime';
+import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { env } from '$amplify/env/claim-username';
 import type { Schema } from '../../data/resource';
 
@@ -30,6 +32,23 @@ const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env)
 Amplify.configure(resourceConfig, libraryOptions);
 const client = generateClient<Schema>();
 
+// UserProfile is read and written directly, not through the generated resolvers,
+// while Username stays on AppSync (above) because its create() is the conditional
+// write this whole function turns on. The split is forced by UserProfile.username's
+// field-level authorization (data/resource.ts): that rule exists so no member can
+// rewrite their own handle, and `allow.resource()` has no field-level form in the
+// installed @aws-amplify/data-schema to carve this function back out of it. Going
+// under AppSync for this one field sidesteps that entirely — the same reason
+// membership/handler.ts writes Watchlist.editors/viewers over the raw SDK.
+//
+// It also makes the ALREADY_CLAIMED check atomic rather than advisory: the
+// conditional UpdateItem below re-asserts attribute_not_exists(username) at write
+// time, so two concurrent claims by the same member can't both get past the read.
+const ddbClient = new DynamoDBClient({});
+const docClient = DynamoDBDocumentClient.from(ddbClient);
+
+const USER_PROFILE_TABLE = process.env.USER_PROFILE_TABLE_NAME!;
+
 // Not shared with the frontend form: amplify/** and src/** are separate
 // compilation contexts (no cross-boundary import), so the client-side
 // version of this check (System Design §2.5 — "UX only") is a deliberate,
@@ -47,13 +66,13 @@ export const handler: AppSyncResolverHandler<Args, Result> = async (event) => {
         return { success: false, username: null, error: 'INVALID_FORMAT' };
     }
 
-    const { data: profile, errors: profileErrors } = await client.models.UserProfile.get({ id: userId });
-    if (profileErrors) {
-        throw new Error(`claim-username: failed to read UserProfile: ${JSON.stringify(profileErrors)}`);
-    }
+    const { Item: profile } = await docClient.send(
+        new GetCommand({ TableName: USER_PROFILE_TABLE, Key: { id: userId } }),
+    );
     // FR-AUTH-3 / System Design §9 known limitation 6: username changes are not
     // supported in this release, so a member with a username already may not
-    // claim another one.
+    // claim another one. This is the fast path only — the conditional write below
+    // is what actually enforces it.
     if (profile?.username) {
         return { success: false, username: null, error: 'ALREADY_CLAIMED' };
     }
@@ -72,8 +91,26 @@ export const handler: AppSyncResolverHandler<Args, Result> = async (event) => {
         throw new Error(`claim-username: Username.create() for "${username}" returned no data and no errors`);
     }
 
-    const { errors: updateErrors } = await client.models.UserProfile.update({ id: userId, username });
-    if (updateErrors) {
+    try {
+        await docClient.send(
+            new UpdateCommand({
+                TableName: USER_PROFILE_TABLE,
+                Key: { id: userId },
+                // updatedAt is maintained explicitly: Amplify only auto-populates it
+                // inside the generated resolver, which this raw write bypasses, and
+                // its generated schema marks the field non-null — an item missing it
+                // resolves to null in full on read (GraphQL null-propagation), the
+                // same trap permission-fanout/handler.ts documents for its own raw
+                // WatchlistMember writes.
+                UpdateExpression: 'SET username = :username, updatedAt = :updatedAt',
+                // attribute_exists(id) guards against UpdateItem's default upsert
+                // conjuring a profile row post-confirmation never created;
+                // attribute_not_exists(username) is the real ALREADY_CLAIMED gate.
+                ConditionExpression: 'attribute_exists(id) AND attribute_not_exists(username)',
+                ExpressionAttributeValues: { ':username': username, ':updatedAt': new Date().toISOString() },
+            }),
+        );
+    } catch (err) {
         // Best-effort compensating delete: this is not FR-MEM-8's transactional
         // guarantee (that's scoped to watchlist membership), but leaving the
         // username permanently reserved against a profile that never got it is
@@ -81,9 +118,15 @@ export const handler: AppSyncResolverHandler<Args, Result> = async (event) => {
         // username is orphaned-reserved — a known limitation, not silently
         // "fixed" by pretending the claim succeeded.
         await client.models.Username.delete({ username }).catch(() => undefined);
-        throw new Error(
-            `claim-username: failed to update UserProfile after reserving "${username}": ${JSON.stringify(updateErrors)}`,
-        );
+        if (err instanceof ConditionalCheckFailedException) {
+            // Either a concurrent claim by this same member won the race, or the
+            // profile row is missing entirely. Both are "you can't claim now", and
+            // the reservation has just been released either way.
+            return { success: false, username: null, error: 'ALREADY_CLAIMED' };
+        }
+        throw new Error(`claim-username: failed to update UserProfile after reserving "${username}"`, {
+            cause: err,
+        });
     }
 
     return { success: true, username: createdUsername.username, error: null };

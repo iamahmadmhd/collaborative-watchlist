@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/solid';
 import { useCurrentUser } from '../../../entities/member/api/use-current-user';
 import {
@@ -8,9 +7,8 @@ import {
 import type { WatchlistRole } from '../../../entities/watchlist/model/watchlist';
 import { RoleBadge } from '../../../entities/watchlist/ui/role-badge';
 import { memberColor, memberInitial } from '../../../entities/member/model/member-color';
-import { Button } from '../../../shared/ui/button';
 import { Select } from '../../../shared/ui/select';
-import { DialogClose, DialogPopup, DialogRoot, DialogTrigger } from '../../../shared/ui/dialog';
+import { ConfirmDialog } from '../../../shared/ui/confirm-dialog';
 import { AddMemberDialog } from './add-member-dialog';
 import { useChangeMemberRole, useLeaveWatchlist, useRemoveMember } from '../api/manage-members';
 
@@ -122,122 +120,51 @@ function MemberRow({
 }
 
 function RemoveMemberButton({ watchlistId, userId, label }: { watchlistId: string; userId: string; label: string }) {
-    const [open, setOpen] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const removeMember = useRemoveMember(watchlistId);
 
-    async function handleConfirm() {
-        setError(null);
-        try {
-            await removeMember.mutateAsync(userId);
-            setOpen(false);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Could not remove that collaborator.');
-        }
-    }
-
     return (
-        <DialogRoot
-            open={open}
-            onOpenChange={(next) => {
-                setOpen(next);
-                if (!next) setError(null);
+        <ConfirmDialog
+            trigger={
+                <button
+                    type='button'
+                    aria-label={`Remove ${label} from this watchlist`}
+                    className='text-muted hover:text-danger flex-none'
+                >
+                    <XMarkIcon className='size-3.5' />
+                </button>
+            }
+            title='Remove collaborator?'
+            description={`${label} will lose access to this watchlist immediately.`}
+            confirmLabel='Remove'
+            fallbackErrorMessage='Could not remove that collaborator.'
+            onConfirm={async () => {
+                await removeMember.mutateAsync(userId);
             }}
-        >
-            <DialogTrigger
-                render={
-                    <button
-                        type='button'
-                        aria-label={`Remove ${label} from this watchlist`}
-                        className='text-muted hover:text-danger flex-none'
-                    >
-                        <XMarkIcon className='size-3.5' />
-                    </button>
-                }
-            />
-            <DialogPopup
-                title='Remove collaborator?'
-                description={`${label} will lose access to this watchlist immediately.`}
-            >
-                <div className='flex flex-col gap-3'>
-                    {error && (
-                        <p role='alert' className='font-body text-danger text-sm'>
-                            {error}
-                        </p>
-                    )}
-                    <div className='flex justify-end gap-3'>
-                        <DialogClose
-                            render={
-                                <Button variant='secondary' type='button'>
-                                    Cancel
-                                </Button>
-                            }
-                        />
-                        <Button type='button' isLoading={removeMember.isPending} onClick={handleConfirm}>
-                            Remove
-                        </Button>
-                    </div>
-                </div>
-            </DialogPopup>
-        </DialogRoot>
+        />
     );
 }
 
 function LeaveButton({ watchlistId, onLeft }: { watchlistId: string; onLeft: () => void }) {
-    const [open, setOpen] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const leaveWatchlist = useLeaveWatchlist(watchlistId);
 
-    async function handleConfirm() {
-        setError(null);
-        try {
-            await leaveWatchlist.mutateAsync();
-            setOpen(false);
-            onLeft();
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Could not leave this watchlist.');
-        }
-    }
-
     return (
-        <DialogRoot
-            open={open}
-            onOpenChange={(next) => {
-                setOpen(next);
-                if (!next) setError(null);
+        <ConfirmDialog
+            trigger={
+                <button
+                    type='button'
+                    className='text-muted hover:text-danger font-mono text-[10px] tracking-[0.04em] uppercase'
+                >
+                    Leave
+                </button>
+            }
+            title='Leave this watchlist?'
+            description="You'll lose access until an Owner adds you back."
+            confirmLabel='Leave'
+            fallbackErrorMessage='Could not leave this watchlist.'
+            onConfirm={async () => {
+                await leaveWatchlist.mutateAsync();
+                onLeft();
             }}
-        >
-            <DialogTrigger
-                render={
-                    <button
-                        type='button'
-                        className='text-muted hover:text-danger font-mono text-[10px] tracking-[0.04em] uppercase'
-                    >
-                        Leave
-                    </button>
-                }
-            />
-            <DialogPopup title='Leave this watchlist?' description="You'll lose access until an Owner adds you back.">
-                <div className='flex flex-col gap-3'>
-                    {error && (
-                        <p role='alert' className='font-body text-danger text-sm'>
-                            {error}
-                        </p>
-                    )}
-                    <div className='flex justify-end gap-3'>
-                        <DialogClose
-                            render={
-                                <Button variant='secondary' type='button'>
-                                    Cancel
-                                </Button>
-                            }
-                        />
-                        <Button type='button' isLoading={leaveWatchlist.isPending} onClick={handleConfirm}>
-                            Leave
-                        </Button>
-                    </div>
-                </div>
-            </DialogPopup>
-        </DialogRoot>
+        />
     );
 }

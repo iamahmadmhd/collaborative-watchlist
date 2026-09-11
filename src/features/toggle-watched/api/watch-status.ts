@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
+import { useOptimisticMutation } from '../../../shared/lib/use-optimistic-mutation';
 
 // FR-WATCH-1..4, System Design §5.2 access pattern 5 / §5.1's WatchStatus row
 // ((userId, itemId) primary key, watchlistId + watchedAt as plain attributes).
@@ -37,17 +38,15 @@ export function useWatchedSet(watchlistId: string) {
     });
 }
 
-// FR-WATCH-1/2. Optimistic onMutate/onError/onSettled with rollback (System
-// Design §7.2), mirrored from features/save-movie's useToggleSave — this is a
-// private per-member toggle with no subscription counterpart (WatchStatus
-// carries no editors/viewers array to authorize one), so the query cache here
-// is the only place this state lives client-side.
+// FR-WATCH-1/2. Optimistic update with rollback (System Design §7.2, via
+// shared/lib/use-optimistic-mutation.ts) — this is a private per-member toggle
+// with no subscription counterpart (WatchStatus carries no editors/viewers
+// array to authorize one), so the query cache here is the only place this
+// state lives client-side.
 export function useToggleWatched(watchlistId: string) {
-    const queryClient = useQueryClient();
-    const queryKey = watchStatusQueryKey(watchlistId);
-
-    return useMutation({
-        mutationFn: async ({ tmdbId, isWatched }: { tmdbId: string; isWatched: boolean }) => {
+    return useOptimisticMutation<{ tmdbId: string; isWatched: boolean }, Set<string>>({
+        queryKey: () => watchStatusQueryKey(watchlistId),
+        mutationFn: async ({ tmdbId, isWatched }) => {
             const { userId } = await getCurrentUser();
             const itemId = watchedItemId(watchlistId, tmdbId);
             if (isWatched) {
@@ -61,27 +60,14 @@ export function useToggleWatched(watchlistId: string) {
                 });
             }
         },
-        onMutate: async ({ tmdbId, isWatched }) => {
-            await queryClient.cancelQueries({ queryKey });
-            const previous = queryClient.getQueryData<Set<string>>(queryKey);
-            queryClient.setQueryData<Set<string>>(queryKey, (old) => {
-                const next = new Set(old);
-                if (isWatched) {
-                    next.delete(tmdbId);
-                } else {
-                    next.add(tmdbId);
-                }
-                return next;
-            });
-            return { previous };
-        },
-        onError: (_err, _vars, context) => {
-            if (context?.previous) {
-                queryClient.setQueryData(queryKey, context.previous);
+        optimisticUpdate: (previous, { tmdbId, isWatched }) => {
+            const next = new Set(previous);
+            if (isWatched) {
+                next.delete(tmdbId);
+            } else {
+                next.add(tmdbId);
             }
-        },
-        onSettled: () => {
-            void queryClient.invalidateQueries({ queryKey });
+            return next;
         },
     });
 }

@@ -3,6 +3,8 @@ import { postConfirmation } from '../functions/post-confirmation/resource';
 import { claimUsername } from '../functions/claim-username/resource';
 import { tmdbProxy } from '../functions/tmdb-proxy/resource';
 import { membership } from '../functions/membership/resource';
+import { deleteAccount } from '../functions/delete-account/resource';
+import { watchlistItem } from '../functions/watchlist-item/resource';
 
 // Models below follow System Design §5.1 (Data Design) exactly. Before changing a
 // key structure or auth rule, re-read §4.4 (Authorization Model) and ADR-001 — the
@@ -12,7 +14,11 @@ import { membership } from '../functions/membership/resource';
 // membership function (addMember/removeMember/leaveWatchlist), and permission-fanout
 // (§4.5 propagation to WatchlistItem + §5.4 itemCount maintenance, both stream-driven
 // from amplify/backend.ts — not visible in this file) are all implemented. All five
-// functions named in System Design §4.1 now exist.
+// functions named in System Design §4.1 now exist, plus three §4.1 does not name:
+// delete-account (NFR-COMP-2), image-proxy (FR-TMDB-8, ADR-013 — not schema-referenced
+// at all), and watchlist-item, which exists because the generated create resolver
+// cannot authorize a WatchlistItem against its parent Watchlist — see that model's
+// authorization comment below.
 
 const schema = a
     .schema({
@@ -24,13 +30,49 @@ const schema = a
                 // afterward, authenticated, via claim-username (the post-verification
                 // username screen, or Settings for a member who abandoned that screen).
                 // This field stays optional to cover the window between those two steps.
-                username: a.string(),
+                // Field-level authorization REPLACES the model-level rules for this
+                // field (same Amplify Gen2 semantics the Watchlist model relies on
+                // below): readable by any authenticated member, writable by NO ONE
+                // through GraphQL — not even its owner. Without this, the model-level
+                // owner `update` grant covered it, and
+                // `UserProfile.update({ id: me, username: 'someone_else' })` let any
+                // member display a handle they never claimed. That bypasses
+                // claim-username's Username-sentinel write entirely, so the handle
+                // isn't globally taken — but the handle every screen renders is this
+                // field, which is the impersonation that matters (FR-AUTH-4,
+                // NFR-SEC-7). claim-username still writes it, via a direct DynamoDB
+                // UpdateItem rather than through AppSync — see that handler, and the
+                // schema-level allow.resource() comment at the bottom of this file,
+                // for why a field-level rule can't name a function grant.
+                username: a.string().authorization((allow) => [allow.authenticated().to(['read'])]),
                 displayName: a.string(),
                 avatarUrl: a.string(),
             })
             .authorization((allow) => [
-                allow.authenticated().to(['read']),
-                allow.owner().to(['read', 'update']),
+                // NFR-SEC-7 ("Member enumeration shall not be possible"): `read`
+                // grants BOTH get and list, so this previously exposed
+                // `listUserProfiles` — the entire member directory, to any signed-in
+                // caller. `get` keeps the point reads every caller actually makes
+                // (entities/member's use-current-user, use-watchlist-members' display
+                // -name lookup) and removes the list query from the schema altogether.
+                allow.authenticated().to(['get']),
+                // ownerDefinedIn('id') rather than the default owner() (which would add
+                // and rely on a SEPARATE auto-populated `owner` field): default owner
+                // auth's auto-population only runs on a genuine userPool-authenticated
+                // write, but post-confirmation creates this row over IAM
+                // (allow.resource() below) — that auto-population never fires, so a
+                // separate `owner` field would stay permanently empty and every later
+                // owner-authenticated update() would be silently denied (the original
+                // form of this bug: display name never persisted). `id` has no such
+                // problem — it's the Cognito sub, and every writer (this create,
+                // claim-username's later update) already sets it correctly as a matter
+                // of course, so pointing ownership at it needs no extra field, no extra
+                // write, and no extra IAM grant. identityClaim('sub') matches the same
+                // bare claim against it (default owner() would compare against the
+                // composite `sub::cognito:username` claim instead — moot here anyway,
+                // since auth/resource.ts's email+OTP login has no real Cognito username
+                // to compose with).
+                allow.ownerDefinedIn('id').identityClaim('sub').to(['get', 'update']),
                 // FR-AUTH-7: email is intentionally NOT a field here — never expose it.
             ]),
 
@@ -51,7 +93,13 @@ const schema = a
             // row, i.e. no uniqueness protection at all. FR-AUTH-4 / V-1 depend on `username`
             // itself being the identifier.
             .authorization((allow) => [
-                allow.authenticated().to(['read']),
+                // `get`, not `read`. NFR-SEC-7 requires exact-match lookup with no
+                // listing, and System Design §7.1 names that as the mechanism — but
+                // `read` grants get AND list, so `listUsernames` handed any
+                // authenticated caller every username -> userId pair in the system.
+                // Restricting to `get` removes that query from the generated schema,
+                // leaving only the point read the live-availability check needs.
+                allow.authenticated().to(['get']),
                 // No user-facing write rule exists on this model at all. The only writer
                 // is claim-username, via the schema-level allow.resource(claimUsername) grant
                 // below — that's what makes it structurally the only writer, not discipline.
@@ -75,22 +123,45 @@ const schema = a
                 // closure of FR-MEM-9 / NFR-SEC-2 on the GraphQL surface is therefore stronger
                 // than allow.resource() would have been: no caller — Owner included — gets
                 // `update` on these fields via the API at all, so post-creation they are
-                // structurally unreachable from any GraphQL request, full stop. `create` stays
-                // granted to the Owner only, so the initial values can be set when a watchlist
-                // is made.
+                // structurally unreachable from any GraphQL request, full stop. Of the three,
+                // only `ownerId` keeps a `create` grant — it has to be set when a watchlist is
+                // made; editors/viewers start empty and belong to the membership function.
+                //
+                // ownerId IS this model's ownership field (see the model-level rule
+                // below), not just a string the Owner happens to be allowed to write.
+                // That distinction was the bug: under the previous `allow.owner()`,
+                // ownership rode on a SEPARATE implicit `owner` field that Amplify
+                // auto-populates from the caller's claim, while `ownerId` stayed an
+                // ordinary client-supplied string with no constraint on its VALUE. A
+                // member could therefore create a watchlist carrying someone else's
+                // sub as ownerId: permission-fanout's INSERT handler then wrote a
+                // WatchlistMember(OWNER) row for that victim, the list appeared on
+                // their /lists screen, and membership/handler.ts's
+                // `watchlist.ownerId === callerId` check handed them administration of
+                // a list the planter could still rename and delete. Pointing the
+                // model's owner rule at `ownerId` makes Amplify validate the field
+                // against the caller's own sub on create (and populate it when
+                // omitted), which is the check that was missing. `update` is granted to
+                // no one, so ownership is write-once (FR-MEM-9 / NFR-SEC-2).
                 ownerId: a
                     .string()
                     .required()
                     .authorization((allow) => [
-                        allow.owner().to(['read', 'create']),
+                        allow.ownerDefinedIn('ownerId').identityClaim('sub').to(['read', 'create']),
                         allow.ownersDefinedIn('editors').to(['read']),
                         allow.ownersDefinedIn('viewers').to(['read']),
                     ]),
+                // Read-only to everyone, including the Owner: `create` is gone as well
+                // as `update`. Nothing sets these at creation time — §4.4 makes the
+                // membership function their sole writer — and leaving `create` granted
+                // let an Owner seed a list with arbitrary collaborators, skipping the
+                // WatchlistMember rows FR-MEM-8 pairs them with and the 20-member cap
+                // FR-MEM-7 sets.
                 editors: a
                     .string()
                     .array()
                     .authorization((allow) => [
-                        allow.owner().to(['read', 'create']),
+                        allow.ownerDefinedIn('ownerId').identityClaim('sub').to(['read']),
                         allow.ownersDefinedIn('editors').to(['read']),
                         allow.ownersDefinedIn('viewers').to(['read']),
                     ]),
@@ -98,18 +169,51 @@ const schema = a
                     .string()
                     .array()
                     .authorization((allow) => [
-                        allow.owner().to(['read', 'create']),
+                        allow.ownerDefinedIn('ownerId').identityClaim('sub').to(['read']),
                         allow.ownersDefinedIn('editors').to(['read']),
                         allow.ownersDefinedIn('viewers').to(['read']),
                     ]),
-                itemCount: a.integer().default(0), // maintained by permission-fanout stream consumer, §5.4
+                // Maintained by the permission-fanout stream consumer (§5.4), which
+                // writes it straight to DynamoDB — so, like the three fields above, it
+                // needs no GraphQL write path at all. It previously had none of its own
+                // rules and so inherited the model-level Editor `update` grant, letting
+                // any Editor set the list's film count to whatever they liked.
+                //
+                // .default(0) is deliberately GONE, and its absence is load-bearing:
+                // field-level authorization is checked against the mutation's WRITE SET,
+                // and a default puts the field in that write set even when the caller
+                // never mentions it. With `create` granted to nobody, every
+                // Watchlist.create() therefore failed with "Unauthorized on [itemCount]"
+                // — the field the client had not sent and could not have sent. (editors
+                // and viewers carry the identical rule and are fine precisely because
+                // they have no default: a field absent from the write set is never
+                // checked. ownerId is fine because it holds a `create` grant.)
+                //
+                // Granting `create` here would have fixed the error too, but would let an
+                // Owner seed an arbitrary opening count; dropping the default keeps the
+                // field unwritable by anyone over GraphQL, which is the whole point.
+                // Nothing depends on the 0: DynamoDB's ADD treats a missing number
+                // attribute as 0, so permission-fanout's `ADD itemCount :delta` still
+                // reads 1 after the first item lands, and both client readers already
+                // coalesce (`watchlist.itemCount ?? 0` — entities/watchlist's
+                // use-watchlists and the watchlist-detail header).
+                itemCount: a
+                    .integer()
+                    .authorization((allow) => [
+                        allow.ownerDefinedIn('ownerId').identityClaim('sub').to(['read']),
+                        allow.ownersDefinedIn('editors').to(['read']),
+                        allow.ownersDefinedIn('viewers').to(['read']),
+                    ]),
             })
             .authorization((allow) => [
                 // Model-level default, applying to every field WITHOUT its own rule above —
                 // i.e. name/description only, per §4.4's table.
                 allow.ownersDefinedIn('editors').to(['read', 'update']),
                 allow.ownersDefinedIn('viewers').to(['read']),
-                allow.owner(), // full CRUD on name/description; ownerId/editors/viewers narrowed above
+                // Ownership rides on `ownerId` (see that field's comment) rather than a
+                // separate implicit `owner` field. Full CRUD on name/description;
+                // ownerId/editors/viewers/itemCount narrowed above.
+                allow.ownerDefinedIn('ownerId').identityClaim('sub'),
             ]),
 
         WatchlistMember: a
@@ -149,7 +253,21 @@ const schema = a
             })
             .identifier(['watchlistId', 'tmdbId']) // composite key => FR-ITEM-2 (no dup) is free
             .authorization((allow) => [
-                allow.ownersDefinedIn('editors'), // full CRUD
+                // No `create` for anyone. `allow.ownersDefinedIn('editors')` can only
+                // check that the caller appears in the array the caller just sent, and
+                // `watchlistId` is likewise part of the create input — so under a
+                // client-facing create grant ANY authenticated member could insert an
+                // item into ANY watchlist by naming its id and listing themselves (plus
+                // whoever else they liked) in `editors`. Nothing in the generated
+                // resolver could consult the parent Watchlist to know better. Creation
+                // now goes through the addWatchlistItem mutation below, whose handler
+                // reads the parent, checks Owner-or-Editor, and stamps these arrays
+                // itself (SRS §6.1's "Non-member -> add item: deny" cell).
+                //
+                // `update`/`delete` stay client-facing: both require the caller to
+                // already be in THIS item's fan-out-maintained editors array, which is
+                // no longer forgeable now that items can't be created with one.
+                allow.ownersDefinedIn('editors').to(['read', 'update', 'delete']),
                 allow.ownersDefinedIn('viewers').to(['read']),
             ]),
 
@@ -265,6 +383,38 @@ const schema = a
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(claimUsername)),
 
+        // FR-ITEM-1/2/4, ADR-001. Item creation is a Lambda-backed mutation rather
+        // than the generated createWatchlistItem resolver — see the WatchlistItem
+        // model's authorization comment above for the hole that closes, and
+        // functions/watchlist-item/resource.ts for why the handler still performs
+        // its write back through AppSync (subscriptions, §2.4) instead of writing
+        // DynamoDB directly the way membership and delete-account do.
+        //
+        // The argument list deliberately carries no permission data and no
+        // attribution: editors/viewers come from the parent Watchlist, addedBy from
+        // the caller's Cognito sub, addedAt from the server clock. `position` is the
+        // client-computed fractional rank (ADR-006) and authorizes nothing.
+        // allow.authenticated() is a coarse gate only; the Owner-or-Editor check
+        // happens inside the handler against the parent row it reads itself
+        // (NFR-SEC-1), matching claimUsername's and membership's pattern.
+        AddWatchlistItemResult: a.customType({
+            success: a.boolean().required(),
+            error: a.enum(['NOT_FOUND', 'NOT_ALLOWED', 'ALREADY_IN_LIST']),
+        }),
+        addWatchlistItem: a
+            .mutation()
+            .arguments({
+                watchlistId: a.string().required(),
+                tmdbId: a.string().required(),
+                title: a.string().required(),
+                posterPath: a.string(),
+                releaseYear: a.integer(),
+                position: a.string().required(),
+            })
+            .returns(a.ref('AddWatchlistItemResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(watchlistItem)),
+
         // membership (System Design §4.2, §4.4, §4.5, FR-MEM-1..9). All three mutations are
         // handled by the same Lambda, which writes Watchlist + WatchlistMember atomically via
         // DynamoDB TransactWriteItems — see membership/handler.ts for why. allow.authenticated()
@@ -345,6 +495,23 @@ const schema = a
             .returns(a.ref('ChangeRoleResult'))
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(membership)),
+
+        // NFR-COMP-2. No arguments and no error enum: unlike addMember/removeMember/
+        // changeMemberRole, there is no target to get wrong and no ownership/self check to
+        // fail — deleteAccount only ever acts on event.identity.sub, so it's inherently
+        // self-scoped by construction, not by a runtime check. allow.authenticated() is the
+        // same coarse gate the other membership-style mutations use; the handler's actual
+        // writes go straight to DynamoDB (delete-account/handler.ts), same reason as
+        // membership's own mutations bypass the generated resolvers.
+        DeleteAccountResult: a.customType({
+            success: a.boolean().required(),
+        }),
+        deleteAccount: a
+            .mutation()
+            .arguments({})
+            .returns(a.ref('DeleteAccountResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(deleteAccount)),
     })
     .authorization((allow) => [
         // allow.resource(fn) is only available at schema level in the installed
@@ -352,15 +519,37 @@ const schema = a
         // (ModelType/ModelField's authorization() callbacks omit `resource` from
         // the allow-modifier type). The IAM policy this grants post-confirmation
         // is schema-wide 'mutate', wider than "create on UserProfile only"; the
-        // handler itself only ever calls UserProfile.create. When membershipFn
-        // lands, its grant joins this same list.
+        // handler itself only ever calls UserProfile.create.
+        //
+        // This is also the one mechanism here safe from a stack-topology trap:
+        // post-confirmation is grouped into the AUTH stack (its resource.ts —
+        // required for the Cognito trigger wiring in auth/resource.ts), and the
+        // data stack already depends on the auth stack one way (defineData's
+        // userPool authorization mode needs the User Pool as its authorizer).
+        // allow.resource(fn) only ever points data-stack -> fn's-stack, so it
+        // stacks harmlessly on top of that same-direction dependency; backend.ts
+        // has the fuller comment on why a plain CDK Table.grant() the other way
+        // (data-stack table -> auth-stack function) isn't safe to add instead.
+        //
+        // Schema-level allow.resource() operations are GraphQL-shaped
+        // ('query' | 'mutate' | 'listen'), not the per-field CRUD vocabulary used
+        // inside a model's own .to(), and they cannot be narrowed to a single model or
+        // field — every grant below is schema-wide 'mutate' even though each handler
+        // touches exactly one model.
         allow.resource(postConfirmation).to(['mutate']),
-        // claim-username reads UserProfile (to reject an already-claimed member),
-        // creates Username, and updates UserProfile.username. Schema-level allow.resource()
-        // operations are GraphQL-shaped ('query' | 'mutate' | 'listen'), not the
-        // per-field CRUD vocabulary used inside a model's own .to() — 'query' covers
-        // the UserProfile.get() read, same schema-wide-grant caveat as above.
-        allow.resource(claimUsername).to(['mutate', 'query']),
+        // Narrowed from ['mutate', 'query']: claim-username's only remaining AppSync
+        // calls are Username.create() (whose implicit attribute_not_exists condition
+        // is the actual uniqueness mechanism, ADR-008) and the compensating
+        // Username.delete(). Its UserProfile read and its UserProfile.username write
+        // now go straight to DynamoDB — they had to, because that field carries its
+        // own field-level rule and, as the paragraph above explains, allow.resource()
+        // has no field-level form to name there.
+        allow.resource(claimUsername).to(['mutate']),
+        // watchlist-item calls WatchlistItem.create() through AppSync, deliberately:
+        // that is what publishes the onCreateWatchlistItem subscription event
+        // /lists/:id depends on (§2.4). Same schema-wide-grant caveat as above — the
+        // handler only ever calls that one mutation.
+        allow.resource(watchlistItem).to(['mutate']),
     ]);
 
 export type Schema = ClientSchema<typeof schema>;

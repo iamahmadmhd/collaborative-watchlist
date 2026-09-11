@@ -6,7 +6,7 @@ import { signIn, signUp } from 'aws-amplify/auth';
 import { TextField } from '../../shared/ui/text-field';
 import { Button } from '../../shared/ui/button';
 import { AuthPageShell } from './auth-page-shell';
-import { authErrorMessage } from './auth-error-message';
+import { authErrorMessage } from '../../shared/lib/auth-error-message';
 
 // FR-AUTH-1, ADR-012 (v1.5). One screen for both entry points — the design
 // board's own overview lists only "/signup and /verify" for the whole auth flow,

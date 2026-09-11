@@ -1,34 +1,38 @@
-import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useCurrentUser } from '../../entities/member/api/use-current-user';
 import { useCurrentUserEmail } from '../../entities/member/api/use-current-user-email';
 import { ClaimUsernameForm } from '../../features/claim-username/ui/claim-username-form';
 import { EditProfileForm } from '../../features/edit-profile/ui/edit-profile-form';
 import { useSignOut } from '../../features/sign-out/api/sign-out';
+import { useDeleteAccount } from '../../features/delete-account/api/delete-account';
 import { ThemeToggle } from '../../shared/ui/theme-toggle';
 import { Button } from '../../shared/ui/button';
-import { DialogClose, DialogPopup, DialogRoot, DialogTrigger } from '../../shared/ui/dialog';
+import { ConfirmDialog } from '../../shared/ui/confirm-dialog';
 import { queryClient } from '../../shared/lib/query-client';
 import { CURRENT_USER_QUERY_KEY } from '../../entities/member/api/use-current-user';
+import { formatIsoDate } from '../../shared/lib/format-date';
 
 // docs/design/Settings.dc.html. No FR-LIST/FR-ITEM equivalent for this screen's own
-// existence — it's the aggregate home for FR-AUTH-5/6, FR-THEME-1..6, and ADR-011's
-// Settings recovery path, none of which had anywhere to live before this page did
-// (CLAUDE.md's module structure lists `pages/settings/`; nothing implemented it).
+// existence — it's the aggregate home for FR-AUTH-5/6, FR-THEME-1..6, NFR-COMP-2, and
+// ADR-011's Settings recovery path, none of which had anywhere to live before this page
+// did (CLAUDE.md's module structure lists `pages/settings/`; nothing implemented it).
 //
-// Two rows the board shows are deliberately NOT built here — flagging per this
-// project's own "don't silently resolve a board/spec conflict" rule (docs/design/README.md):
+// One row the board shows is deliberately NOT built here — flagging per this project's
+// own "don't silently resolve a board/spec conflict" rule (docs/design/README.md):
 //   - Email "Change": no FR anywhere authorizes changing the sign-in email this
 //     release (FR-AUTH lists registration, verification, sign-out, username, display
 //     name/avatar — never email change). Building it would be inventing scope.
-//   - "Delete account" (NFR-COMP-2): the board's own hint ("Films you added to shared
-//     lists stay, without your name") implies an anonymization semantic NFR-COMP-2
-//     doesn't actually specify, cascading deletion needs a new Lambda (Cognito user
-//     deletion + UserProfile/Username/SavedMovie/WatchStatus/owned-Watchlist cleanup)
-//     that doesn't exist yet, and what happens to `WatchlistItem.addedBy` pointing at
-//     a deleted user on lists that member doesn't own is an undecided data-model
-//     question, not an implementation detail. Exactly the kind of gap CLAUDE.md says
-//     to stop and ask about rather than build silently.
+//
+// "Delete account" (NFR-COMP-2, DeleteAccountRow below) resolved the two gaps this
+// comment used to flag by asking rather than guessing: an owned watchlist with other
+// collaborators is cascade-deleted in full (not blocked pending an ownership transfer
+// step), and WatchlistItem.addedBy on lists this member doesn't own is left as-is —
+// once their WatchlistMember row is gone, this page's own memberLabels fallback
+// ('A member', below) already anonymizes the byline for free. See
+// amplify/functions/delete-account/handler.ts for both, and for the one known
+// limitation that comment flags rather than silently working around (WatchStatus has
+// no reverse index from watchlistId, so other collaborators' watched-state rows on a
+// cascade-deleted list are orphaned, not cleaned up).
 export function SettingsPage() {
     const currentUserQuery = useCurrentUser();
 
@@ -62,10 +66,8 @@ export function SettingsPage() {
 }
 
 function formatJoinedDate(joinedAt: string | null | undefined): string | null {
-    if (!joinedAt) return null;
-    const date = new Date(joinedAt);
-    if (Number.isNaN(date.getTime())) return null;
-    return `joined ${new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date)}`;
+    const formatted = formatIsoDate(joinedAt, { month: 'long', year: 'numeric' });
+    return formatted ? `joined ${formatted}` : null;
 }
 
 function Header({ joinedAt }: { joinedAt: string | null | undefined }) {
@@ -125,7 +127,6 @@ function IdentitySection() {
                 <div className='flex flex-col gap-1.5'>
                     <span className='text-text text-[15px] font-semibold'>Username</span>
                     <span className='text-muted font-mono text-sm'>@{user.username}</span>
-                    <span className='font-body text-muted text-xs'>Usernames can&apos;t be changed once claimed.</span>
                 </div>
             ) : currentUserQuery.isSuccess ? (
                 <div className='flex flex-col gap-1.5'>
@@ -150,6 +151,7 @@ function AccountSection() {
         <section id='account' className='border-border flex flex-col gap-4 border-t pt-5.5'>
             <SectionHeading>Account</SectionHeading>
             <SignOutRow />
+            <DeleteAccountRow />
         </section>
     );
 }
@@ -157,16 +159,9 @@ function AccountSection() {
 function SignOutRow() {
     const navigate = useNavigate();
     const signOut = useSignOut();
-    const [confirmOpen, setConfirmOpen] = useState(false);
 
     async function handleSignOut() {
         await signOut.mutateAsync(false);
-        await navigate({ to: '/get-started' });
-    }
-
-    async function handleSignOutEverywhere() {
-        await signOut.mutateAsync(true);
-        setConfirmOpen(false);
         await navigate({ to: '/get-started' });
     }
 
@@ -188,36 +183,60 @@ function SignOutRow() {
                         End every session, on every device signed in as you.
                     </span>
                 </div>
-                <DialogRoot open={confirmOpen} onOpenChange={setConfirmOpen}>
-                    <DialogTrigger
-                        render={
-                            <button
-                                type='button'
-                                className='text-danger font-mono text-[11px] tracking-[0.04em] uppercase'
-                            >
-                                Sign out everywhere
-                            </button>
-                        }
-                    />
-                    <DialogPopup
-                        title='Sign out everywhere?'
-                        description="You'll be signed out on every device, including this one, and need a fresh code to sign back in."
-                    >
-                        <div className='flex justify-end gap-3'>
-                            <DialogClose
-                                render={
-                                    <Button variant='secondary' type='button'>
-                                        Cancel
-                                    </Button>
-                                }
-                            />
-                            <Button type='button' isLoading={signOut.isPending} onClick={handleSignOutEverywhere}>
-                                Sign out everywhere
-                            </Button>
-                        </div>
-                    </DialogPopup>
-                </DialogRoot>
+                <ConfirmDialog
+                    trigger={
+                        <button type='button' className='text-danger font-mono text-[11px] tracking-[0.04em] uppercase'>
+                            Sign out everywhere
+                        </button>
+                    }
+                    title='Sign out everywhere?'
+                    description="You'll be signed out on every device, including this one, and need a fresh code to sign back in."
+                    confirmLabel='Sign out everywhere'
+                    onConfirm={async () => {
+                        await signOut.mutateAsync(true);
+                        await navigate({ to: '/get-started' });
+                    }}
+                />
             </div>
+        </div>
+    );
+}
+
+// NFR-COMP-2. Same confirm-dialog shape as SignOutRow above (this project's established
+// pattern for a destructive action, per CLAUDE.md/NFR-USE-3) — the difference here is a
+// mutation that can fail partway through (delete-account/handler.ts touches seven
+// tables) and needs to say so rather than leaving the member staring at a dialog that
+// silently closed. ConfirmDialog's own try/catch already keeps the dialog open with the
+// error shown on failure; retrying is just submitting again — see useDeleteAccount's own
+// comment on why that's safe.
+function DeleteAccountRow() {
+    const navigate = useNavigate();
+    const deleteAccount = useDeleteAccount();
+
+    return (
+        <div className='flex items-center gap-4'>
+            <div className='flex flex-1 flex-col gap-0.5'>
+                <span className='text-text text-sm font-semibold'>Delete account</span>
+                <span className='text-muted font-body text-xs'>
+                    Permanently remove your profile, saved films, watched records, and any watchlists you own. This
+                    can&apos;t be undone.
+                </span>
+            </div>
+            <ConfirmDialog
+                trigger={
+                    <button type='button' className='text-danger font-mono text-[11px] tracking-[0.04em] uppercase'>
+                        Delete account
+                    </button>
+                }
+                title='Delete your account?'
+                description="This permanently deletes your profile, saved films, and watched records. Any watchlist you own is deleted for every collaborator on it — lists you've joined but don't own, you'll simply leave. This can't be undone."
+                confirmLabel='Delete account'
+                fallbackErrorMessage='Could not delete your account. Please try again.'
+                onConfirm={async () => {
+                    await deleteAccount.mutateAsync();
+                    await navigate({ to: '/get-started' });
+                }}
+            />
         </div>
     );
 }

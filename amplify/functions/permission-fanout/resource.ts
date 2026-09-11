@@ -20,8 +20,11 @@ import { defineFunction } from '@aws-amplify/backend';
 // the reverse edge, function -> data, on that SAME shared stack — two edges,
 // opposite directions, between "data" and the shared stack, even though neither
 // function alone would cause it. Moving this function's home to 'data' (where
-// its table access already conceptually belongs) leaves tmdb-proxy alone in the
-// catch-all stack with only its one, one-directional edge — no cycle.
+// its table access already conceptually belongs) leaves the catch-all stack holding
+// only functions with no function -> data edge of their own — tmdb-proxy (one
+// one-directional data -> function edge) and, since v1.6, image-proxy (no data edge in
+// either direction). No cycle, as long as that stays true: see image-proxy/resource.ts,
+// which records the same invariant from the other side.
 export const permissionFanout = defineFunction({
     name: 'permission-fanout',
     resourceGroupName: 'data',

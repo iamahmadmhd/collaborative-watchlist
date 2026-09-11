@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
+import { useOptimisticMutation } from '../../../shared/lib/use-optimistic-mutation';
 import type { MovieSummary } from '../../../entities/movie/model/movie';
 import type { Schema } from '../../../../amplify/data/resource';
 
@@ -43,14 +44,13 @@ export function useSavedMovies() {
     });
 }
 
-// FR-SAVE-1/2. Optimistic onMutate/onError/onSettled with rollback (System
-// Design §7.2) — a save/unsave failure must not leave the badge lying about
-// the server's actual state.
+// FR-SAVE-1/2. Optimistic update with rollback (System Design §7.2, via
+// shared/lib/use-optimistic-mutation.ts) — a save/unsave failure must not leave
+// the badge lying about the server's actual state.
 export function useToggleSave() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: async ({ movie, isSaved }: { movie: MovieSummary; isSaved: boolean }) => {
+    return useOptimisticMutation<{ movie: MovieSummary; isSaved: boolean }, Set<string>>({
+        queryKey: () => SAVED_MOVIES_KEY,
+        mutationFn: async ({ movie, isSaved }) => {
             const { userId } = await getCurrentUser();
             if (isSaved) {
                 await client.models.SavedMovie.delete({ userId, tmdbId: movie.tmdbId });
@@ -65,27 +65,14 @@ export function useToggleSave() {
                 });
             }
         },
-        onMutate: async ({ movie, isSaved }) => {
-            await queryClient.cancelQueries({ queryKey: SAVED_MOVIES_KEY });
-            const previous = queryClient.getQueryData<Set<string>>(SAVED_MOVIES_KEY);
-            queryClient.setQueryData<Set<string>>(SAVED_MOVIES_KEY, (old) => {
-                const next = new Set(old);
-                if (isSaved) {
-                    next.delete(movie.tmdbId);
-                } else {
-                    next.add(movie.tmdbId);
-                }
-                return next;
-            });
-            return { previous };
-        },
-        onError: (_err, _vars, context) => {
-            if (context?.previous) {
-                queryClient.setQueryData(SAVED_MOVIES_KEY, context.previous);
+        optimisticUpdate: (previous, { movie, isSaved }) => {
+            const next = new Set(previous);
+            if (isSaved) {
+                next.delete(movie.tmdbId);
+            } else {
+                next.add(movie.tmdbId);
             }
-        },
-        onSettled: () => {
-            void queryClient.invalidateQueries({ queryKey: SAVED_MOVIES_KEY });
+            return next;
         },
     });
 }

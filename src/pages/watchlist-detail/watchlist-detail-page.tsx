@@ -1,5 +1,5 @@
 import { Link, useNavigate } from '@tanstack/react-router';
-import { ArrowLeftIcon, TrashIcon } from '@heroicons/react/24/solid';
+import { TrashIcon } from '@heroicons/react/24/solid';
 import { useWatchlist } from '../../entities/watchlist/api/use-watchlist';
 import { useWatchlistRole } from '../../entities/watchlist/api/use-watchlist-role';
 import { useWatchlistMembers } from '../../entities/watchlist/api/use-watchlist-members';
@@ -15,6 +15,8 @@ import { useRemoveListItem } from '../../features/manage-list-items/api/manage-l
 import { ManageMembersSection } from '../../features/manage-members/ui/manage-members-section';
 import { useWatchedSet } from '../../features/toggle-watched/api/watch-status';
 import { WatchedToggleButton } from '../../features/toggle-watched/ui/watched-toggle-button';
+import { BackHeader, MobileBackHeader } from '../../shared/ui/back-header';
+import { QueryState } from '../../shared/ui/query-state';
 
 // docs/design has no Watchlist Detail mock (only README.md — see docs/design/
 // and CLAUDE.md's design-reference note); this follows the same fallback
@@ -57,7 +59,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
     if (watchlistQuery.isError || watchlistQuery.data === null) {
         return (
             <div className='flex min-h-0 flex-1 flex-col'>
-                <DetailHeader onBack={handleBack} />
+                <BackHeader label='BACK TO WATCHLISTS' onBack={handleBack} />
                 <p className='text-danger font-body p-7 text-sm' role='alert'>
                     This watchlist doesn&apos;t exist, or you don&apos;t have access to it.
                 </p>
@@ -73,7 +75,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
         <>
             {/* Desktop */}
             <div className='hidden min-h-0 min-w-0 flex-1 flex-col lg:flex'>
-                <DetailHeader onBack={handleBack} />
+                <BackHeader label='BACK TO WATCHLISTS' onBack={handleBack} />
                 <div className='min-h-0 flex-1 overflow-y-auto px-7 py-5.5'>
                     <ListHeading
                         watchlist={watchlist}
@@ -100,7 +102,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
 
             {/* Mobile */}
             <div className='flex min-h-0 flex-1 flex-col lg:hidden'>
-                <MobileHeader onBack={handleBack} />
+                <MobileBackHeader label='BACK' onBack={handleBack} />
                 <div className='min-h-0 flex-1 overflow-y-auto p-4'>
                     <ListHeading
                         watchlist={watchlist}
@@ -125,30 +127,6 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                 </div>
             </div>
         </>
-    );
-}
-
-function DetailHeader({ onBack }: { onBack: () => void }) {
-    return (
-        <header className='border-border bg-raised flex flex-none items-center gap-3.5 border-b px-7 py-3.5'>
-            <button
-                type='button'
-                onClick={onBack}
-                className='text-muted hover:text-text flex items-center gap-2 font-mono text-[11px] tracking-[0.02em]'
-            >
-                <ArrowLeftIcon className='size-4' /> BACK TO WATCHLISTS
-            </button>
-        </header>
-    );
-}
-
-function MobileHeader({ onBack }: { onBack: () => void }) {
-    return (
-        <div className='border-border bg-raised flex flex-none items-center justify-between px-4 pt-11 pb-2.5'>
-            <button type='button' onClick={onBack} className='text-muted flex items-center gap-2 font-mono text-[11px]'>
-                <ArrowLeftIcon className='size-4' /> BACK
-            </button>
-        </div>
     );
 }
 
@@ -208,58 +186,52 @@ function ItemsSection({
     watchlistId: string;
     className?: string;
 }) {
-    if (itemsQuery.isPending) {
-        return (
-            <div className={`flex flex-col gap-3 ${className ?? ''}`}>
-                {Array.from({ length: 3 }, (_, i) => (
-                    <div key={i} className='bg-raised h-20 animate-pulse rounded-sm' />
-                ))}
-            </div>
-        );
-    }
-
-    if (itemsQuery.isError) {
-        return (
-            <p className={`text-danger font-body text-sm ${className ?? ''}`} role='alert'>
-                Could not load this list&apos;s films.{' '}
-                {itemsQuery.error instanceof Error ? itemsQuery.error.message : ''}
-            </p>
-        );
-    }
-
-    if (itemsQuery.data.length === 0) {
-        return (
-            <div
-                className={`border-border flex flex-col items-center gap-1.5 rounded-sm border border-dashed p-5.5 ${className ?? ''}`}
-            >
-                <span className='text-text font-body text-sm font-semibold'>No films yet</span>
-                <span className='text-muted font-mono text-[11px]'>
-                    <Link to='/discover' search={{ page: 1 }} className='text-accent hover:underline'>
-                        BROWSE
-                    </Link>{' '}
-                    OR{' '}
-                    <Link to='/search' search={{ q: '', page: 1 }} className='text-accent hover:underline'>
-                        SEARCH
-                    </Link>{' '}
-                    THEN ADD TO WATCHLIST
-                </span>
-            </div>
-        );
-    }
-
     return (
-        <div className={`flex flex-col gap-2.5 ${className ?? ''}`}>
-            {itemsQuery.data.map((item) => (
-                <ItemRow
-                    key={item.tmdbId}
-                    item={item}
-                    canEdit={canEdit}
-                    addedByLabel={memberLabels.get(item.addedBy) ?? 'A member'}
-                    isWatched={watchedSet?.has(item.tmdbId) ?? false}
-                    watchlistId={watchlistId}
-                />
-            ))}
-        </div>
+        <QueryState
+            query={itemsQuery}
+            pending={
+                <div className={`flex flex-col gap-3 ${className ?? ''}`}>
+                    {Array.from({ length: 3 }, (_, i) => (
+                        <div key={i} className='bg-raised h-20 animate-pulse rounded-sm' />
+                    ))}
+                </div>
+            }
+            errorPrefix="Could not load this list's films."
+            errorClassName={className}
+            isEmpty={(data) => data.length === 0}
+            empty={
+                <div
+                    className={`border-border flex flex-col items-center gap-1.5 rounded-sm border border-dashed p-5.5 ${className ?? ''}`}
+                >
+                    <span className='text-text font-body text-sm font-semibold'>No films yet</span>
+                    <span className='text-muted font-mono text-[11px]'>
+                        <Link to='/discover' search={{ page: 1 }} className='text-accent hover:underline'>
+                            BROWSE
+                        </Link>{' '}
+                        OR{' '}
+                        <Link to='/search' search={{ q: '', page: 1 }} className='text-accent hover:underline'>
+                            SEARCH
+                        </Link>{' '}
+                        THEN ADD TO WATCHLIST
+                    </span>
+                </div>
+            }
+        >
+            {(data) => (
+                <div className={`flex flex-col gap-2.5 ${className ?? ''}`}>
+                    {data.map((item) => (
+                        <ItemRow
+                            key={item.tmdbId}
+                            item={item}
+                            canEdit={canEdit}
+                            addedByLabel={memberLabels.get(item.addedBy) ?? 'A member'}
+                            isWatched={watchedSet?.has(item.tmdbId) ?? false}
+                            watchlistId={watchlistId}
+                        />
+                    ))}
+                </div>
+            )}
+        </QueryState>
     );
 }
 
@@ -330,7 +302,7 @@ function ItemRow({
 function PageSkeleton({ onBack }: { onBack: () => void }) {
     return (
         <div className='flex min-h-0 flex-1 flex-col'>
-            <DetailHeader onBack={onBack} />
+            <BackHeader label='BACK TO WATCHLISTS' onBack={onBack} />
             <div className='flex flex-col gap-3 p-7'>
                 <div className='bg-raised h-8 w-1/3 animate-pulse rounded-sm' />
                 <div className='bg-raised h-4 w-1/2 animate-pulse rounded-sm' />

@@ -7,7 +7,7 @@ import { autoSignIn, confirmSignIn, confirmSignUp, resendSignUpCode, signIn } fr
 import { OtpField } from '../../shared/ui/otp-field';
 import { Button } from '../../shared/ui/button';
 import { AuthPageShell } from './auth-page-shell';
-import { authErrorMessage } from './auth-error-message';
+import { authErrorMessage } from '../../shared/lib/auth-error-message';
 
 // FR-AUTH-1/2, ADR-011 (v1.4). One screen, two entry points — sign-up confirmation
 // and sign-in confirmation are different Cognito operations (confirmSignUp vs

@@ -3,13 +3,9 @@ import { Menu as BaseMenu } from '@base-ui/react/menu';
 import { CheckIcon } from '@heroicons/react/24/solid';
 import { tv } from 'tailwind-variants';
 
-// Design System §3.5 names Menu for "per-item actions" — this is its one
-// wrapper (dialog.tsx / select.tsx's established pattern: no caller reaches
-// for @base-ui/react/menu directly). First caller is
-// features/manage-list-items' add-to-list picker, a checkbox-item menu rather
-// than a Select — the movie can be toggled into several lists at once without
-// the menu closing between toggles, which Select's single-value model can't
-// express.
+// The one Menu wrapper, so no caller reaches for @base-ui/react/menu directly. Its
+// checkbox-item form is what the add-to-list picker needs: a movie can be toggled into
+// several lists without the menu closing, which Select's single-value model cannot do.
 
 const menu = tv({
     slots: {

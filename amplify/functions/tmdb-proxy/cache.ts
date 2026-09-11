@@ -1,13 +1,12 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 
-// System Design §5.5, ADR-007. TmdbCache is plain CDK (amplify/backend.ts), not an
-// Amplify Data model — it must never appear in the GraphQL schema. Client instantiated
-// once per Lambda execution environment and reused across warm invocations.
+// The client is instantiated once per execution environment and reused across warm
+// invocations.
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 
-// §5.5 TTL table (seconds).
+// TTLs in seconds.
 export const CACHE_TTL_SECONDS = {
     genres: 60 * 60 * 24 * 7,
     trending: 60 * 60,
@@ -16,9 +15,8 @@ export const CACHE_TTL_SECONDS = {
     search: 60 * 15,
 } as const;
 
-// Cache keys are normalised before use — lowercased/trimmed search terms, sorted
-// genre id lists — or "The Matrix" and "the matrix" occupy separate entries and
-// halve the hit rate (§5.5).
+// Keys are normalised — lowercased/trimmed search terms, sorted genre ids — or
+// "The Matrix" and "the matrix" occupy separate entries and halve the hit rate.
 export const cacheKeys = {
     genres: (): string => 'genres',
     trending: (page: number): string => `trending#week#p${page}`,
@@ -35,8 +33,8 @@ export function createCacheStore(tableName: string) {
             if (!Item) {
                 return null;
             }
-            // DynamoDB TTL deletion can lag up to 48h past expiry (§5.5) — row existence is
-            // not a cache hit. Compare expiresAt explicitly and treat stale-but-present as a miss.
+            // TTL deletion can lag up to 48h past expiry, so row existence is not a hit:
+            // compare expiresAt explicitly and treat stale-but-present as a miss.
             const nowEpochSeconds = Math.floor(Date.now() / 1000);
             if (typeof Item.expiresAt !== 'number' || Item.expiresAt <= nowEpochSeconds) {
                 return null;

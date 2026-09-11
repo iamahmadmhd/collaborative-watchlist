@@ -6,15 +6,7 @@ import { memberColor, memberInitial } from '../../entities/member/model/member-c
 
 export type ShellSection = 'Discover' | 'Saved' | 'Watchlists' | 'Settings';
 
-// docs/design/Shell Sidebar.dc.html, desktop nav rail (System Design nav:
-// "left sidebar rail with the list of watchlists always visible"). Watchlists
-// now links to its real page (FR-LIST-5) with a real count (entities/watchlist).
-//
-// "YOUR LISTS" (docs/design) — the per-list mini-rows below the main nav — stays
-// left out. Its rows need a real per-list destination (/lists/$watchlistId,
-// watchlist-detail) and per-list collaborator stripes (member data this screen
-// doesn't cheaply have, same reasoning pages/watchlists/watchlists-page.tsx's own
-// row gives for skipping avatars). Reinstate it once watchlist-detail lands.
+// Desktop nav rail.
 
 function NavRow({
     label,
@@ -64,10 +56,8 @@ export function ShellSidebar({ active, className }: { active: ShellSection; clas
                 <NavRow label='Saved' count={savedSet?.size} active={active === 'Saved'} to='/saved' />
                 <NavRow label='Watchlists' count={watchlists?.length} active={active === 'Watchlists'} to='/lists' />
             </nav>
-            {/* Doubles as the desktop entry point to /settings — docs/design's Shell
-                Sidebar mock has no separate nav row for it (its `active` enum only
-                covers Discover/Saved/Watchlists), so this identity block is where
-                Settings is actually reached, matching the mobile Tab Bar's "YOU" tab. */}
+            {/* The identity block doubles as the desktop entry point to /settings —
+                there is no separate nav row for it. */}
             <Link
                 to='/settings'
                 className={`border-border mt-auto flex items-center gap-2.5 border-t px-5 pt-3.5 ${active === 'Settings' ? 'text-accent' : ''}`}

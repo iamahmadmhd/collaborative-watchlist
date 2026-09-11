@@ -1,16 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { signOut } from 'aws-amplify/auth';
 
-// FR-AUTH-6. "There is no persistent credential to reset" (SRS) — signOut() simply
-// ends the current session; re-authentication issues a fresh one-time code.
-// `global` maps to Amplify Auth's own global sign-out (revokes every refresh token
-// for this member, not just the current device) — Settings' "sign out everywhere"
-// row (docs/design/Settings.dc.html) is this same requirement, not a separate one.
+// `global` revokes every refresh token for this member rather than just the current
+// device, which is what Settings' "sign out everywhere" row uses.
 //
-// Clearing the query cache matters beyond this member's own session: without it,
-// a different member signing in on the same browser afterward would see the
-// previous member's cached watchlists/saved films/current-user flash on screen
-// until each query happened to refetch.
+// Clearing the query cache matters beyond this session: without it, the next member to
+// sign in on this browser would see the previous one's cached data flash on screen.
 export function useSignOut() {
     const queryClient = useQueryClient();
 

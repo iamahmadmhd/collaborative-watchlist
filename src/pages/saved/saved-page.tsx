@@ -4,13 +4,6 @@ import { MovieCard } from '../../entities/movie/ui/movie-card';
 import { formatRelativeTime } from '../../shared/lib/format-relative-time';
 import { QueryState } from '../../shared/ui/query-state';
 
-// docs/design/Saved.dc.html. The header's "Newest first ▼" and "All genres ▼"
-// pills are left out — same reasoning discover-page.tsx already established for
-// its dropped "2020s" pill: sort order is a fixed query-time guarantee here
-// (System Design §5.2 access pattern 1, the byUserAndDate index), not a user
-// choice, and SavedMovie carries no genre field to filter by. Shipping either
-// as a non-functional control would be inventing scope CLAUDE.md says to ask
-// about instead.
 export function SavedPage() {
     const savedMoviesQuery = useSavedMovies();
     const count = savedMoviesQuery.data?.length;
@@ -24,8 +17,6 @@ export function SavedPage() {
                         <h1 className='font-display text-text m-0 text-[30px] font-bold tracking-[-0.025em]'>
                             Saved films
                         </h1>
-                        {/* FR-SAVE-4's "private to no one else" guarantee, stated in the
-                            copy itself rather than left implicit. */}
                         <span className='text-muted font-mono text-[11px]'>
                             {count === undefined ? '…' : `${count} film${count === 1 ? '' : 's'}`} · private to you
                         </span>
@@ -90,10 +81,8 @@ function SavedMoviesGrid({
     );
 }
 
-// docs/design/Saved.dc.html overlays the SAVED badge on the poster itself and
-// adds a "saved X ago" timestamp beside the release year — entities/movie/ui/
-// movie-card.tsx's MovieCard supports both via its overlayBadge/meta/compact
-// props rather than this being a bespoke reimplementation.
+// The overlaid badge and "saved X ago" timestamp come from MovieCard's own
+// overlayBadge/meta/compact props rather than a bespoke card.
 function SavedMovieCard({ saved }: { saved: SavedMovieRecord }) {
     const movie = {
         tmdbId: saved.tmdbId,

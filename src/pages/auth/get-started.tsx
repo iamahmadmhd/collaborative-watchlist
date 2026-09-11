@@ -8,43 +8,28 @@ import { Button } from '../../shared/ui/button';
 import { AuthPageShell } from './auth-page-shell';
 import { authErrorMessage } from '../../shared/lib/auth-error-message';
 
-// FR-AUTH-1, ADR-012 (v1.5). One screen for both entry points — the design
-// board's own overview lists only "/signup and /verify" for the whole auth flow,
-// no separate sign-in route. A passwordless flow makes this natural: signing in
-// is just "prove you own this email again," the same email field either way —
-// the only thing that differs is whether Cognito already has an account for it,
-// which the app discovers from the API response, not from the visitor picking
-// the right page up front.
+// One screen for both entry points: with no password, signing in is just proving you
+// own the email again, so the only difference is whether Cognito already has an account
+// — which the API response reveals, not the visitor picking a page.
 //
-// Mechanism: attempt signUp() first, not signIn() first. If it throws
-// UsernameExistsException, fall back to signIn() for the returning-member path.
-// This is the reverse of ADR-010's original choice, corrected in ADR-012:
-// Amplify Gen2's app client has PreventUserExistenceErrors enabled by default
-// (confirmed against the deployed pool), so signIn() with EMAIL_OTP returns an
-// indistinguishable decoy challenge for a nonexistent user instead of throwing
-// UserNotFoundException — no email is ever sent and signIn-first can never reach
-// signUp(). SignUp is not covered by that setting (it must reveal a duplicate to
-// prevent overwriting an account), so UsernameExistsException stays reliable.
-// Either way the next stop is /verify; a new member picks a username afterward,
-// on its own screen (ADR-011) — no username field lives on this screen.
+// signUp() is attempted first, falling back to signIn() on UsernameExistsException.
+// The reverse order cannot work: the app client has PreventUserExistenceErrors enabled,
+// so signIn() with EMAIL_OTP returns a decoy challenge for a nonexistent user rather
+// than throwing, and signIn-first would never reach signUp(). SignUp is exempt from
+// that protection, so its duplicate error stays reliable. See System Design ADR-012.
 //
-// autoSignIn MUST be the options object below, not `true`. Traced through
-// @aws-amplify/auth's source: a bare `true` makes signUp() build the post-confirm
-// autoSignIn() call with no authFlowType at all, which falls through to Cognito's
-// SRP (password) sign-in — "Password is required to signIn" on a pool that has no
-// password. Passing the same { authFlowType: 'USER_AUTH', preferredChallenge:
-// 'EMAIL_OTP' } shape used everywhere else in this file routes autoSignIn()
-// through the same EMAIL_OTP path instead.
+// autoSignIn must be the options object, not `true`: a bare `true` builds the
+// post-confirmation autoSignIn() call with no authFlowType, which falls through to
+// SRP sign-in and fails with "Password is required to signIn" on a passwordless pool.
 const schema = z.object({
     email: z.email('Enter a valid email address'),
 });
 
 type FormValues = z.infer<typeof schema>;
 
-// `redirect?: string | undefined`, not just `redirect?: string`: the route
-// component forwards Route.useSearch()'s value (typed `string | undefined` for
-// an optional Zod field) directly as this prop, and exactOptionalPropertyTypes
-// rejects an explicit `undefined` against a plain `?: string`.
+// `redirect?: string | undefined`, not `redirect?: string`: the route forwards
+// useSearch()'s value directly, and exactOptionalPropertyTypes rejects an explicit
+// undefined against a plain optional property.
 export function SignUpPage({ redirect }: { redirect?: string | undefined }) {
     const navigate = useNavigate();
     const {

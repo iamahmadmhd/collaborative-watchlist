@@ -8,10 +8,8 @@ const DIVISIONS: { amount: number; unit: Intl.RelativeTimeFormatUnit }[] = [
     { amount: Number.POSITIVE_INFINITY, unit: 'years' },
 ];
 
-// narrow + numeric:'always' is the one Intl.RelativeTimeFormat configuration
-// that reproduces docs/design/Saved.dc.html's "2d ago" / "1w ago" / "1mo ago"
-// style exactly — numeric:'auto' substitutes "yesterday"/"last wk." for the
-// 1-unit case, which the mock never shows.
+// narrow + numeric:'always' gives the "2d ago" / "1w ago" style throughout;
+// numeric:'auto' would substitute "yesterday" and "last wk." for the 1-unit case.
 const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'always', style: 'narrow' });
 
 export function formatRelativeTime(iso: string, now = Date.now()): string {

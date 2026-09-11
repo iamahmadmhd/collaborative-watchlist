@@ -12,27 +12,8 @@ import { queryClient } from '../../shared/lib/query-client';
 import { CURRENT_USER_QUERY_KEY } from '../../entities/member/api/use-current-user';
 import { formatIsoDate } from '../../shared/lib/format-date';
 
-// docs/design/Settings.dc.html. No FR-LIST/FR-ITEM equivalent for this screen's own
-// existence — it's the aggregate home for FR-AUTH-5/6, FR-THEME-1..6, NFR-COMP-2, and
-// ADR-011's Settings recovery path, none of which had anywhere to live before this page
-// did (CLAUDE.md's module structure lists `pages/settings/`; nothing implemented it).
-//
-// One row the board shows is deliberately NOT built here — flagging per this project's
-// own "don't silently resolve a board/spec conflict" rule (docs/design/README.md):
-//   - Email "Change": no FR anywhere authorizes changing the sign-in email this
-//     release (FR-AUTH lists registration, verification, sign-out, username, display
-//     name/avatar — never email change). Building it would be inventing scope.
-//
-// "Delete account" (NFR-COMP-2, DeleteAccountRow below) resolved the two gaps this
-// comment used to flag by asking rather than guessing: an owned watchlist with other
-// collaborators is cascade-deleted in full (not blocked pending an ownership transfer
-// step), and WatchlistItem.addedBy on lists this member doesn't own is left as-is —
-// once their WatchlistMember row is gone, this page's own memberLabels fallback
-// ('A member', below) already anonymizes the byline for free. See
-// amplify/functions/delete-account/handler.ts for both, and for the one known
-// limitation that comment flags rather than silently working around (WatchStatus has
-// no reverse index from watchlistId, so other collaborators' watched-state rows on a
-// cascade-deleted list are orphaned, not cleaned up).
+// The aggregate home for profile editing, sign-out, theme, the username recovery path
+// and account deletion.
 export function SettingsPage() {
     const currentUserQuery = useCurrentUser();
 
@@ -202,13 +183,9 @@ function SignOutRow() {
     );
 }
 
-// NFR-COMP-2. Same confirm-dialog shape as SignOutRow above (this project's established
-// pattern for a destructive action, per CLAUDE.md/NFR-USE-3) — the difference here is a
-// mutation that can fail partway through (delete-account/handler.ts touches seven
-// tables) and needs to say so rather than leaving the member staring at a dialog that
-// silently closed. ConfirmDialog's own try/catch already keeps the dialog open with the
-// error shown on failure; retrying is just submitting again — see useDeleteAccount's own
-// comment on why that's safe.
+// Same confirm-dialog shape as SignOutRow, but this mutation can fail partway through
+// seven tables, so the dialog stays open with the error shown. Retrying is just
+// submitting again — every backend step is idempotent.
 function DeleteAccountRow() {
     const navigate = useNavigate();
     const deleteAccount = useDeleteAccount();

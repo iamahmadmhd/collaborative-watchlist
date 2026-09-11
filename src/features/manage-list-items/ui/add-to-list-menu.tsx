@@ -6,12 +6,8 @@ import { MenuCheckboxItem, MenuPopup, MenuRoot, MenuTrigger } from '../../../sha
 import { Button } from '../../../shared/ui/button';
 import { useIsMovieInWatchlist, useToggleListItem } from '../api/manage-list-items';
 
-// docs/design/Movie Detail.dc.html's "Add to watchlist ▼" control
-// (movie-detail-page.tsx previously deferred it: "needs a Watchlists feature
-// that doesn't exist yet"). FR-ITEM-1/FR-ITEM-7: only OWNER/EDITOR lists are
-// offered — a VIEWER-role list is filtered out client-side here, which is
-// presentational only (CLAUDE.md) — the actual enforcement is
-// WatchlistItem's ownersDefinedIn authorization rejecting the create/delete
+// Only Owner/Editor lists are offered; a Viewer-role list is filtered out here. That
+// filtering is presentational — WatchlistItem's authorization rejects the write
 // server-side regardless of what this menu shows.
 export function AddToListMenu({ movie }: { movie: MovieSummary }) {
     const [open, setOpen] = useState(false);
@@ -56,12 +52,9 @@ function AddToListMenuRow({
     movie: MovieSummary;
     open: boolean;
 }) {
-    // Deferred until the menu is actually open (the `enabled` arg) — otherwise
-    // every Movie Detail view would fire one point read per editable
-    // watchlist just to render a trigger button. useToggleListItem's onMutate
-    // writes the optimistic flip into this exact query's cache entry
-    // (membershipQueryKey), so `isMember` already reflects it while pending —
-    // no separate pending-state inversion needed here.
+    // Deferred until the menu is open, or every Movie Detail view would fire one point
+    // read per editable watchlist just to render a trigger. useToggleListItem's onMutate
+    // writes into this same cache entry, so `isMember` already reflects a pending flip.
     const { data: isMember } = useIsMovieInWatchlist(watchlistId, movie.tmdbId, open);
     const toggleListItem = useToggleListItem(watchlistId);
 

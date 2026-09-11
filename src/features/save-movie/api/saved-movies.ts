@@ -7,11 +7,9 @@ import type { Schema } from '../../../../amplify/data/resource';
 
 export type SavedMovieRecord = Schema['SavedMovie']['type'];
 
-// System Design §5.2 access pattern 2: per-card save-state lookup would be one
-// point read per grid card (20 per scroll); instead the whole saved set is
-// fetched once into a Set and checked in memory. `allow.owner()` on SavedMovie
-// (amplify/data/resource.ts) scopes `.list()` to the caller's own rows server-side
-// — no explicit userId filter needed here.
+// Per-card save-state would be one point read per grid card, so the whole saved set is
+// fetched once into a Set and checked in memory. allow.owner() scopes list() to the
+// caller's own rows server-side, so no userId filter is needed.
 const SAVED_MOVIES_KEY = ['saved-movies'];
 
 export function useSavedSet() {
@@ -24,12 +22,9 @@ export function useSavedSet() {
     });
 }
 
-// FR-SAVE-3, System Design §5.2 access pattern 1: the dedicated /saved view
-// resolves through the byUserAndDate secondary index (amplify/data/resource.ts)
-// rather than list()+client-sort — newest-first is a query-time guarantee, not
-// an afterthought. `allow.owner()` still scopes the index to the caller's own
-// rows; the index's partition key (userId) must be supplied explicitly here,
-// unlike list().
+// Resolves through the byUserAndDate index rather than list()-plus-sort, so
+// newest-first is a query-time guarantee. The index's partition key must be supplied
+// explicitly, unlike list(), though allow.owner() still scopes it to the caller.
 export function useSavedMovies() {
     return useQuery({
         queryKey: [...SAVED_MOVIES_KEY, 'list'],
@@ -44,9 +39,8 @@ export function useSavedMovies() {
     });
 }
 
-// FR-SAVE-1/2. Optimistic update with rollback (System Design §7.2, via
-// shared/lib/use-optimistic-mutation.ts) — a save/unsave failure must not leave
-// the badge lying about the server's actual state.
+// Optimistic with rollback: a failed save must not leave the badge lying about the
+// server's state.
 export function useToggleSave() {
     return useOptimisticMutation<{ movie: MovieSummary; isSaved: boolean }, Set<string>>({
         queryKey: () => SAVED_MOVIES_KEY,

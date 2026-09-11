@@ -1,10 +1,8 @@
 import { z } from 'zod';
 
-// FR-TMDB-3: TMDB's field naming (snake_case, numeric ids, nulls) must never reach
-// the client. Each raw schema below is parsed from the untrusted TMDB response —
-// unknown/extra TMDB fields are stripped by Zod's default object behaviour — then
-// mapped through a `to*` function into the camelCase, tmdbId-as-string shape that
-// matches the GraphQL custom types in data/resource.ts.
+// TMDB's field naming never reaches the client. Each raw schema parses the untrusted
+// TMDB response — Zod strips unknown fields — and a `to*` function maps it into the
+// camelCase, tmdbId-as-string shape of the GraphQL custom types in data/resource.ts.
 
 const rawGenre = z.object({
     id: z.number(),
@@ -100,7 +98,7 @@ export function toGenres(raw: z.infer<typeof rawGenresResponse>): Genre[] {
 }
 
 // TMDB returns cast in billing order already; capped to keep the cache payload and
-// response size reasonable — FR-DISC-4 asks for "cast", not the full crew list.
+// response size reasonable.
 const MAX_CAST_MEMBERS = 10;
 
 export function toMovieDetail(raw: z.infer<typeof rawMovieDetail>): MovieDetail {

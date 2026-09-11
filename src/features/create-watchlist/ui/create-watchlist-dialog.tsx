@@ -7,11 +7,7 @@ import { Button } from '../../../shared/ui/button';
 import { DialogClose, DialogPopup, DialogRoot, DialogTrigger } from '../../../shared/ui/dialog';
 import { useCreateWatchlist } from '../api/create-watchlist';
 
-// FR-LIST-1, Design System §3.5 (Dialog -> "list creation"). docs/design's
-// Watchlists.dc.html shows only the trigger button ("New watchlist") — no
-// creation-dialog mock exists in the board to transcribe field-for-field, so this
-// is a minimal two-field form (name required per FR-LIST-1, description optional)
-// rather than a literal copy of anything.
+// A minimal two-field form: name required, description optional.
 const schema = z.object({
     name: z.string().trim().min(1, 'Name is required'),
     description: z.string().trim(),

@@ -1,15 +1,11 @@
 import { useThemePreference, type ThemePreference } from '../lib/theme';
 
-// Design System / docs/design/Settings.dc.html. Two visual treatments of the same
-// three-way FR-THEME-1 control: `cards` (desktop Settings — a mini preview swatch
-// per option) and `segment` (mobile Settings, and the compact corner control on
-// AuthPageShell per FR-THEME-6). Both drive the same shared/lib/theme.ts store, so
-// picking a theme on the auth screens and picking one in Settings can never disagree.
+// Two visual treatments of the same three-way control: `cards` for desktop Settings and
+// `segment` for mobile and the compact corner control on the auth screens. Both drive
+// the same store, so the two can never disagree.
 //
-// The preview swatch colours are deliberately hardcoded hex, not this app's own
-// `--surface`/`--accent` custom properties: a card previewing "Light" must still
-// look light while the page around it is rendered in dark mode, and vice versa —
-// tokens that swap with .dark would defeat the preview's entire purpose.
+// The preview swatch colours are hardcoded hex rather than this app's own tokens: a card
+// previewing "Light" must still look light while the page around it is dark.
 const OPTIONS: { value: ThemePreference; label: string; previewBg: string; bars: [string, string, string] }[] = [
     { value: 'light', label: 'Light', previewBg: '#EAECEF', bars: ['#C5CAD2', '#C5CAD2', '#1B3BD0'] },
     { value: 'dark', label: 'Dark', previewBg: '#131519', bars: ['#2E333D', '#2E333D', '#6B8BFF'] },

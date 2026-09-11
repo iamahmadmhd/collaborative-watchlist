@@ -10,19 +10,15 @@ function membershipQueryKey(watchlistId: string, tmdbId: string) {
     return ['watchlist-item-membership', watchlistId, tmdbId];
 }
 
-// FR-ITEM-4 (ADR-006): a new item appends after the current last position.
+// A new item appends after the current last position.
 // Read fresh via the API rather than the TanStack Query cache — this mutation is
 // reachable from the movie-detail "add to list" menu, which may run before
 // /lists/:id has ever been opened for this particular list, so the
 // entities/watchlist cache entry is not guaranteed to exist yet.
 //
-// The parent's ownerId/editors/viewers are NOT read here any more. They used to
-// be, so the client could stamp them onto the new item (ADR-001's denormalised
-// arrays) — which meant the permission arrays on a brand-new item were whatever
-// the caller sent, and the generated create resolver had no way to check them
-// against the parent. addWatchlistItem's handler reads the Watchlist server-side
-// and stamps them itself (§4.4, NFR-SEC-1); nothing about them belongs on this
-// side of the wire.
+// The parent's permission arrays are deliberately not read here: addWatchlistItem's
+// handler reads the Watchlist server-side and stamps them itself, so nothing about
+// them belongs on this side of the wire.
 async function loadLastPosition(watchlistId: string): Promise<string | null> {
     const { data: items } = await client.models.WatchlistItem.list({ watchlistId });
     return items.reduce<string | null>(
@@ -31,21 +27,17 @@ async function loadLastPosition(watchlistId: string): Promise<string | null> {
     );
 }
 
-// addWatchlistItem returns a typed rejection rather than a GraphQL error string,
-// the same shape as the membership mutations (System Design §2.5's reasoning: the
-// client should not have to parse error text to tell these apart).
+// addWatchlistItem returns a typed rejection rather than a GraphQL error string, so
+// the client never parses error text.
 const ADD_ITEM_ERRORS: Record<string, string> = {
     NOT_FOUND: 'This watchlist no longer exists.',
     NOT_ALLOWED: 'You do not have permission to add films to this list.',
     ALREADY_IN_LIST: 'That film is already on this list.',
 };
 
-// Backs the add-to-list menu's per-row checked state (FR-ITEM-2's own
-// enforcement is the composite-key conditional write on create — this is
-// purely "what should the checkbox show", read via a point read on the same
-// composite key). `enabled` lets callers defer the query until the menu
-// holding this row is actually open, rather than firing one point read per
-// eligible watchlist on every Movie Detail page view.
+// Backs the add-to-list menu's per-row checked state via a point read on the same
+// composite key. `enabled` defers it until the menu is open, rather than firing one
+// point read per eligible watchlist on every Movie Detail view.
 export function useIsMovieInWatchlist(watchlistId: string, tmdbId: string, enabled: boolean) {
     return useQuery({
         queryKey: membershipQueryKey(watchlistId, tmdbId),
@@ -57,15 +49,9 @@ export function useIsMovieInWatchlist(watchlistId: string, tmdbId: string, enabl
     });
 }
 
-// FR-ITEM-1 (add) / FR-ITEM-3 (remove), one mutation toggling the same
-// membership point-read cache (§7.2's optimistic update, via
-// shared/lib/use-optimistic-mutation.ts — the query key here depends on which
-// movie was toggled, which is exactly the per-variables key case that helper
-// exists for). Deliberately does NOT hand-patch entities/watchlist's
-// watchlistItemsQueryKey cache: if /lists/:id happens to be open for this same
-// list in another tab, the real-time subscription already wired into
-// useWatchlistItems (§2.4) picks up this create/delete on its own — patching
-// both caches here would just be a second, racier path to the same result.
+// One mutation toggling the membership point-read cache. It deliberately does not also
+// patch the items cache: if /lists/:id is open for the same list, its subscription
+// already picks this up, and patching both would be a second, racier path.
 export function useToggleListItem(watchlistId: string) {
     return useOptimisticMutation<{ movie: MovieSummary; isMember: boolean }, boolean>({
         queryKey: ({ movie }) => membershipQueryKey(watchlistId, movie.tmdbId),
@@ -80,8 +66,8 @@ export function useToggleListItem(watchlistId: string) {
 
             const lastPosition = await loadLastPosition(watchlistId);
 
-            // addedBy/addedAt are stamped server-side from the caller's own token,
-            // so they are not sent — nor are editors/viewers (see loadLastPosition).
+            // addedBy/addedAt are stamped server-side from the caller's token, so they
+            // are not sent — nor are editors/viewers.
             const { data, errors } = await client.mutations.addWatchlistItem({
                 watchlistId,
                 tmdbId: movie.tmdbId,
@@ -93,9 +79,8 @@ export function useToggleListItem(watchlistId: string) {
             if (errors?.length || !data) {
                 throw new Error(errors?.[0]?.message ?? 'Could not add this film to the list.');
             }
-            // FR-ITEM-2's actual enforcement is still the composite key's implicit
-            // attribute_not_exists condition (§5.1); the handler just maps that
-            // conditional-check failure to ALREADY_IN_LIST on its way back.
+            // Duplicate prevention is the composite key's implicit attribute_not_exists
+            // condition; the handler maps that failure to ALREADY_IN_LIST.
             if (!data.success) {
                 throw new Error((data.error && ADD_ITEM_ERRORS[data.error]) ?? 'Could not add this film to the list.');
             }
@@ -104,10 +89,8 @@ export function useToggleListItem(watchlistId: string) {
     });
 }
 
-// FR-ITEM-3, for /lists/:id's own item rows — unlike the add-to-list menu
-// above, the items array IS what's on screen here, so this optimistically
-// mutates entities/watchlist's own watchlistItemsQueryKey list directly
-// (§7.2) rather than a separate membership flag.
+// For /lists/:id's own item rows. Unlike the add-to-list menu above, the items array
+// is what's on screen, so this patches that list directly rather than a membership flag.
 export function useRemoveListItem(watchlistId: string) {
     return useOptimisticMutation<string, WatchlistItemRecord[]>({
         queryKey: () => watchlistItemsQueryKey(watchlistId),

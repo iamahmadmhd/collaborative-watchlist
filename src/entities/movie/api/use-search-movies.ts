@@ -2,10 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { client } from '../../../shared/lib/amplify-client';
 import type { PaginatedMovies } from '../model/movie';
 
-// FR-DISC-2. Mirrors use-discover-movies.ts's shape; the one difference is
-// `enabled` — an empty query string is the Search screen's initial/cleared
-// state, not a valid TMDB search, so no request goes out until there's
-// something to search for.
+// `enabled` holds the request back on an empty query: that is the Search screen's
+// initial and cleared state, not a valid search.
 export function useSearchMovies({ query, page }: { query: string; page: number }) {
     const trimmedQuery = query.trim();
 

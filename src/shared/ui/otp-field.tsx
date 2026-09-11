@@ -3,25 +3,18 @@ import { Field } from '@base-ui/react/field';
 import { OTPField } from '@base-ui/react/otp-field';
 import { tv } from 'tailwind-variants';
 
-// Design System §3.5, ADR-003, System Design §2.5. OTPField requires Controller —
-// that wiring lives here, once, so pages just pass `control`/`name` like any other
-// field (FR-AUTH-2: email verification code entry). Box styling matches
-// docs/design/ (Auth.dc.html) as of v1.2 — equal-width monospace slots, accent
-// focus ring via color-mix.
-//
-// No discrete variant here (unlike Button/TextField) — the invalid state is
-// already reflected via Base UI's own `data-invalid` attribute on each slot, so
-// `slots` alone (no `variants`) is the right amount of tailwind-variants to use.
+// OTPField requires Controller, and that wiring lives here once so pages pass
+// `control`/`name` like any other field. No variants: the invalid state already comes
+// through Base UI's own `data-invalid` attribute on each slot.
 
 const otpField = tv({
     slots: {
         root: 'flex flex-col gap-1.5',
         label: 'text-muted font-mono text-[10px] tracking-[0.08em] uppercase',
         group: 'flex gap-2',
-        // min-w-0 is load-bearing: a flex item's default min-width is `auto`, which
-        // for an <input> is its intrinsic content width (~20ch in most browsers) —
-        // flex-1 alone can't shrink it below that, so without this the six slots
-        // overflow their container instead of sharing it equally (verified in-browser).
+        // min-w-0 is load-bearing: a flex item's default min-width is `auto`, which for
+        // an <input> is its intrinsic content width, so flex-1 alone cannot shrink the
+        // slots below it and they overflow instead of sharing the row.
         slot: 'border-border bg-surface text-text focus:border-accent data-[invalid]:border-danger h-14 min-w-0 flex-1 rounded-[3px] border text-center font-mono text-2xl focus:shadow-[0_0_0_3px_color-mix(in_oklab,var(--accent)_18%,transparent)] focus:outline-none',
         error: 'font-body text-danger text-xs',
     },

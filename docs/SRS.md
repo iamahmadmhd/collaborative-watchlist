@@ -1,6 +1,6 @@
 # Software Requirements Specification
 
-## Collaborative Movie Discovery & Watchlist Application
+## Repertory — Collaborative Movie Discovery & Watchlist Application
 
 Version: 1.6 Date: 10 September 2026 Status: Approved
 
@@ -376,3 +376,11 @@ Still open:
 - Observability: logging, metrics, error tracking, alarm thresholds
 - Cost model at expected scale
 - Visual design of individual screens, beyond the token system and layout principles
+- Whether V-10 and NFR-SEC-3 require a carve-out for the image CDN introduced by
+  FR-TMDB-8. Both were written before that requirement existed and neither was amended
+  by v1.6: V-10 requires every TMDB-backed operation to reject an unauthenticated caller
+  at the API layer, and NFR-SEC-3 treats the authentication endpoints as the only
+  remaining unauthenticated surface — but artwork is now served from a public CloudFront
+  distribution that satisfies neither. Either the two need an explicit exception for
+  opaque public artwork (no user data crosses that path) or the surface needs closing.
+  See System Design §10 for the partial mitigation applied in the meantime.

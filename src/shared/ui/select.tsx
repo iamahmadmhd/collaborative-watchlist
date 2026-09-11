@@ -2,13 +2,9 @@ import { Select as BaseSelect } from '@base-ui/react/select';
 import { ChevronDownIcon } from '@heroicons/react/24/solid';
 import { tv } from 'tailwind-variants';
 
-// Design System §3.5 names Select for "genre filter; role selection" — this is
-// its one wrapper, used by every caller (filter-discovery's genre picker first;
-// watchlist role selection and the add-member dialog reuse it later). Visual
-// language matches docs/design/ (Discovery.dc.html): 38px trigger, 3px radius,
-// hairline border, monospace chevron. Uncontrolled label lookup is avoided —
-// callers pass `items` and this renders the matching label via Select.Value's
-// render-prop, so the trigger never goes stale relative to the popup's options.
+// The one Select wrapper, used by the genre filter and by role selection. Callers pass
+// `items` and the matching label renders through Select.Value's render prop, so the
+// trigger never goes stale relative to the popup's options.
 
 const select = tv({
     slots: {

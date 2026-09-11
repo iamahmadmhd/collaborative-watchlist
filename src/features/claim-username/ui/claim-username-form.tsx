@@ -16,11 +16,9 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-// FR-AUTH-3/4/5, ADR-011. The claim form itself, shared by the post-verification
-// username screen (src/pages/auth/set-username.tsx) and, per ADR-011's
-// consequences, a future Settings recovery path — each caller supplies its own
-// surrounding chrome (AuthPageShell vs a Settings section) and decides what
-// "done" means via onSuccess.
+// Shared by the post-verification username screen and Settings' recovery path. Each
+// caller supplies its own surrounding chrome and decides what "done" means via
+// onSuccess.
 export function ClaimUsernameForm({ submitLabel, onSuccess }: { submitLabel: string; onSuccess: () => void }) {
     const {
         register,

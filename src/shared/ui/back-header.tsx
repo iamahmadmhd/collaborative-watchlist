@@ -1,8 +1,6 @@
 import { ArrowLeftIcon } from '@heroicons/react/24/solid';
 
-// Shared "‹ BACK" chrome, extracted from movie-detail-page.tsx and
-// watchlist-detail-page.tsx (both had an identical desktop header + mobile
-// header pair, differing only in the label text).
+// Shared "‹ BACK" chrome: a desktop and mobile header pair differing only in label.
 export function BackHeader({ label, onBack }: { label: string; onBack: () => void }) {
     return (
         <header className='border-border bg-raised flex flex-none items-center gap-3.5 border-b px-7 py-3.5'>

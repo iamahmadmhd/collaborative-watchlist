@@ -1,13 +1,8 @@
 import { describe, it } from 'vitest';
 
-// SRS §6.1 Authorization Test Matrix. Every cell here must be asserted against the
-// API layer (the generated Amplify data client, or a direct AppSync call) — never
-// against the UI. A passing "button is hidden" test proves nothing about the
-// security property (CLAUDE.md, "Authorization"). Fill each `it.todo` in as its
-// operation is implemented; do not mark done until the assertion hits the API.
-//
-// Owner/Editor/Viewer full CRUD boundaries: FR-MEM-9, NFR-SEC-2.
-// Non-member / removed-member deny-all: FR-MEM-4, FR-MEM-5, NFR-SEC-1.
+// SRS §6.1's authorization matrix. Every cell must be asserted against the API layer —
+// the generated data client or a direct AppSync call — never against the UI: a passing
+// "button is hidden" test proves nothing about the security property.
 
 type Actor = 'Owner' | 'Editor' | 'Viewer' | 'Non-member' | 'Removed member';
 type Operation = 'read items' | 'add item' | 'remove item' | 'rename list' | 'change membership' | 'delete list';

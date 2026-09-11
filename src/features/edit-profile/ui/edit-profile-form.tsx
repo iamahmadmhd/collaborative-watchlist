@@ -11,11 +11,8 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-// docs/design/Settings.dc.html, PUBLIC IDENTITY section. Unlike the username field
-// beside it (claim-once, ADR-011/System Design §9 Known Limitation #6 — no rename
-// support this release), a display name has no uniqueness constraint and FR-AUTH-5
-// explicitly frames it as ongoing ("allow members to set a display name"), so this
-// is a plain editable field with its own save action.
+// Unlike the claim-once username field beside it, a display name is freely editable,
+// so this is a plain field with its own save action.
 export function EditProfileForm({ currentDisplayName }: { currentDisplayName: string | null }) {
     const updateDisplayName = useUpdateDisplayName();
     const {
@@ -31,9 +28,8 @@ export function EditProfileForm({ currentDisplayName }: { currentDisplayName: st
             await updateDisplayName.mutateAsync(displayName);
             reset({ displayName });
         } catch {
-            // Previously silent: a rejected update left the form dirty with no
-            // feedback at all, which is why this looked like the save "just didn't
-            // stick" rather than a failure. See edit-profile/api/edit-profile.ts.
+            // Without this a rejected update leaves the form dirty with no feedback,
+            // which reads as a save that silently didn't stick.
             setError('root', { message: 'Could not save your display name. Please try again.' });
         }
     });

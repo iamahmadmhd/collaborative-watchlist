@@ -9,21 +9,13 @@ export interface WatchlistMemberWithProfile {
     username: string | null;
 }
 
-// Exported so features/manage-members can invalidate/patch this exact cache entry
-// after add/remove/change-role, the same way watchlistQueryKey and
-// watchlistItemsQueryKey are already shared with their own feature callers.
+// Exported so features/manage-members can patch this exact cache entry.
 export function watchlistMembersQueryKey(watchlistId: string) {
     return ['watchlist-members', watchlistId];
 }
 
-// System Design §5.2 access pattern 6: WatchlistMember's composite key
-// (watchlistId, userId) makes this a plain PK query, not a scan. WatchlistMember
-// itself carries no display fields (§5.1), so each row's UserProfile is fetched
-// alongside it — same Promise.all-per-membership shape use-watchlists.ts already
-// uses for the mirror case (per-membership Watchlist.get()). UserProfile's
-// `allow.authenticated().to(['read'])` (data/resource.ts) means any signed-in
-// member can read any other member's profile, which is exactly what rendering
-// a collaborator list needs.
+// A plain PK query on WatchlistMember's composite key. That model carries no display
+// fields, so each row's UserProfile is fetched alongside it.
 export function useWatchlistMembers(watchlistId: string) {
     return useQuery({
         queryKey: watchlistMembersQueryKey(watchlistId),

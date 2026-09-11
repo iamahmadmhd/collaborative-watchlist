@@ -3,29 +3,16 @@ import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
 import { WATCHLISTS_QUERY_KEY, toMyWatchlist, type MyWatchlist } from '../../../entities/watchlist/api/use-watchlists';
 
-// FR-LIST-1. Plain generated resolver — System Design §4.1 states list CRUD runs
-// on Amplify's generated resolvers, no dedicated Lambda. ownerId is the only
-// permission field set here; its field-level authorization (data/resource.ts)
-// grants `create` to the owner only, exactly this call. editors/viewers are left
-// unset rather than `[]` — Amplify Data array fields have no default, and
-// permission-fanout/handler.ts already treats "absent" as "empty" for a freshly
-// created Watchlist, so an explicit empty array would just be a second way of
-// saying the same thing.
+// List creation runs on the generated resolver. ownerId is the only permission field
+// set here; editors/viewers are left absent rather than `[]`, which permission-fanout
+// already treats as empty.
 //
-// The corresponding WatchlistMember(OWNER) row is NOT created here — it can't
-// be: WatchlistMember has no user-facing write grant at all. permission-fanout
-// creates it from this Watchlist row's own INSERT stream event once this write
-// lands (see that function's file header, point 3), which is NOT synchronous
-// with this mutation's own resolution — a DynamoDB Streams + Lambda hop, not a
-// sub-second guarantee. Invalidating /lists right after create() was tried
-// first and made the bug worse, not better: it raced that stream, refetched
-// while the byUser index still didn't have the new list, and overwrote the
-// freshly created row right back out of the cache. Seeding the cache directly
-// instead sidesteps the race entirely — Watchlist.create()'s own response
-// already has every field this screen needs, and the creator is deterministically
-// the Owner (ownerId is set to this caller above), so nothing here depends on
-// the membership row existing yet. A later natural refetch (remount, window
-// focus) picks up the authoritative row once the stream has long since caught up.
+// The WatchlistMember(OWNER) row is not created here and cannot be — that model has no
+// user-facing write grant. permission-fanout writes it from this row's INSERT stream
+// event, which is a stream-plus-Lambda hop behind this mutation. Invalidating /lists
+// here would race that hop and refetch a byUser index that does not have the new list
+// yet, so the cache is seeded directly instead: create()'s own response carries every
+// field the screen needs, and the caller is deterministically the Owner.
 export function useCreateWatchlist() {
     const queryClient = useQueryClient();
 

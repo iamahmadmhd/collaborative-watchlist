@@ -3,13 +3,9 @@ import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { XMarkIcon } from '@heroicons/react/24/solid';
 import { tv } from 'tailwind-variants';
 
-// Design System §3.5: Dialog backs list creation (create-watchlist) and, later,
-// destructive confirms (NFR-USE-3) and the add-member flow (select.tsx's own
-// comment already anticipates that reuse). One portal/focus model for every
-// overlay in the app (§3.5's stated reason a combobox-inside-a-dialog can't break)
-// — no caller reaches for @base-ui/react/dialog directly; Root/Trigger/Close are
-// re-exported as-is (they render nothing of their own to style), Popup's chrome
-// is composed once here.
+// One portal and focus model for every overlay in the app, so no caller reaches for
+// @base-ui/react/dialog directly. Root/Trigger/Close are re-exported as-is — they
+// render nothing to style — and Popup's chrome is composed once here.
 
 const dialog = tv({
     slots: {

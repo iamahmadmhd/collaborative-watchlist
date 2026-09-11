@@ -90,7 +90,8 @@ src/
   app/        providers/ router/ (file-based routes) get-router.tsx layouts/ styles/
   pages/      discover/ search/ movie-detail/ saved/ watchlists/ watchlist-detail/ settings/ auth/
   features/   save-movie/ manage-list-items/ manage-members/ toggle-watched/
-              create-watchlist/ filter-discovery/ claim-username/
+              create-watchlist/ filter-discovery/ claim-username/ edit-profile/
+              delete-account/ sign-out/
   entities/   movie/ (ui/ model/ api/)  watchlist/ (ui/ model/ api/)  member/ (ui/ model/)
   shared/     ui/ lib/ config/
 ```
@@ -146,9 +147,16 @@ of these categories, you're duplicating an owner — don't.
 
 - Server-side enforcement only (NFR-SEC-1). Client checks (`useWatchlistRole`) are
   presentational — they hide buttons that would fail server-side, they are never the control.
-- Permission fields (`ownerId`, `editors`, `viewers`) are writable only via `allow.resource(membershipFn)`
-  — there must be no user-facing write path to them, ever (FR-MEM-9 / NFR-SEC-2). If a change
-  you're making would let an Editor touch those fields, stop.
+- Permission fields (`ownerId`, `editors`, `viewers`, `itemCount`) have **no GraphQL write path
+  at all** — not for an Editor, not for the Owner (FR-MEM-9 / NFR-SEC-2, System Design §4.4).
+  `ownerId` keeps a `create` grant and nothing else; the rest are unreachable from any request.
+  Their only writers are membership, permission-fanout and delete-account, over direct DynamoDB
+  access. If a change you're making would add a write path to any of them, stop. (System Design
+  §4.4 once said `allow.resource(membershipFn)`; that was never implementable — those functions
+  do not go through AppSync at all.)
+- `WatchlistItem` has no `create` grant either. Item creation goes through the `addWatchlistItem`
+  mutation, whose handler reads the parent watchlist server-side. A generated create resolver
+  can only check the arrays the caller itself sent.
 - `WatchlistItem` carries denormalised `editors`/`viewers` arrays copied from its parent
   (ADR-001). Don't "clean this up" into a parent lookup — that breaks subscription authorization.
 - Every cell of the SRS §6.1 authorization matrix needs an automated test **against the API**,
@@ -159,6 +167,18 @@ of these categories, you're duplicating an owner — don't.
   "not authenticated" — conflating them bounces signed-in members to sign-in on every hard
   refresh. Like `useWatchlistRole`, the guard is presentational: AppSync rejects the operations
   regardless.
+
+## Comments
+
+Source comments explain **mechanism**, not decisions. A comment earns its place when it says
+what a non-obvious line does, or why something is load-bearing and must not be "cleaned up" —
+a CDK escape hatch, a CSS rule that looks decorative but isn't, a condition that guards a race.
+
+Rationale, alternatives considered, history ("this used to be X, which broke because Y"), and
+requirement traceability belong in `docs/`, not in a header comment. If you find yourself
+writing a paragraph of justification above a function, it belongs in System Design — add it
+there and leave a one-line pointer, or leave nothing. Requirement IDs still go in the commit
+message or PR description, per the rule above; they don't go in the code.
 
 ## Before writing code on a new area
 

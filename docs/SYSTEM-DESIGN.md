@@ -1,8 +1,21 @@
 # System Design Document
 
-## Collaborative Movie Discovery & Watchlist Application
+## Repertory — Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.6 Date: 10 September 2026 Companion to: SRS v1.6
+Version: 1.7 Date: 11 September 2026 Companion to: SRS v1.6
+
+Revision note (v1.7): No requirement changed. This revision reconciles the document
+with the implementation as built, and absorbs the rationale that had accumulated in
+source comments rather than here. Five substantive corrections: §4.1 now names all
+eight functions, not five; §4.4's field table is corrected — the permission fields
+have **no** GraphQL write path for anyone, not an `allow.resource(membershipFn)` one;
+§5.4 records that item creation moved off the generated resolver onto the
+`addWatchlistItem` mutation; a new §4.6 documents the CloudFormation stack topology
+the `resourceGroupName` overrides exist to satisfy; and a new §11 records
+implementation status, including what is deliberately not built. §9 and §10 gain the
+limitations and the one unresolved requirements question that were previously
+recorded only in code. Affected: §4.1, §4.2, §4.4, §4.6 (new), §5.1, §5.4, §7.1, §9,
+§10, §11 (new).
 
 Revision note (v1.6): Poster and cast-photo images are now served from our own
 CloudFront distribution instead of image.tmdb.org directly (FR-TMDB-8, new). A new
@@ -296,12 +309,22 @@ amplify/
   functions/
     post-confirmation/          create UserProfile only (v1.4 — username claim moved out)
     tmdb-proxy/                 all four TMDB queries
-    membership/                 add / remove / leave
+    membership/                 add / remove / leave / change role
     claim-username/             username claim — primary path again in v1.4
-    permission-fanout/          DynamoDB stream consumer
+    permission-fanout/          DynamoDB stream consumer (permissions, itemCount, owner row)
+    watchlist-item/             addWatchlistItem — parent-authorized item creation
+    delete-account/             NFR-COMP-2 cascade across seven tables
+    image-proxy/                CloudFront origin for cached TMDB artwork (ADR-013)
+    shared/                     helpers shared between the transactional functions
 ```
 
-Five functions, and the restraint is deliberate. Item CRUD, list CRUD, saves, and watch status all run on Amplify's generated resolvers. Every added Lambda is a cold start, an IAM policy, a log group, and a place for defects to hide. These five exist because each does something a generated resolver structurally cannot.
+Eight functions. The restraint the original five expressed still holds — list CRUD, saves, and watch status all run on Amplify's generated resolvers, and every added Lambda is a cold start, an IAM policy, a log group, and a place for defects to hide — but three more proved structurally necessary after v1.0:
+
+- watchlist-item, because the generated create resolver cannot authorize a WatchlistItem against its parent (§4.4).
+- delete-account, because NFR-COMP-2's cascade writes fields that have no GraphQL write path at all (§4.4).
+- image-proxy, because FR-TMDB-8 needs an origin to fetch and cache artwork (ADR-013). It is not schema-referenced and is not part of the GraphQL surface.
+
+Item creation is therefore the one entry in §4.1's original "runs on generated resolvers" list that no longer does.
 
 ### 4.2 Functions
 
@@ -309,7 +332,15 @@ tmdb-proxy \- handles all four TMDB queries in one function, routing on the Grap
 membership \- the transactional one. Adding a collaborator writes a WatchlistMember record and pushes the user into the parent's editors or viewers array: two tables, and FR-MEM-8 forbids an observable partial result. TransactWriteItems provides atomicity. Generated resolvers write one item each and cannot satisfy this. Remove and leave are the same transaction inverted, with different role checks.  
 claim-username \- conditional write against the Username table keyed on the username string, conditioned on attribute\_not\_exists. The mechanism behind FR-AUTH-4 and V-1. Revised again in v1.4 (ADR-011): back to being the primary path, called from the new post-verification username screen (§2.5) with an authenticated session already established, rather than solely a Settings recovery mechanism (v1.2's framing). Settings still calls the same function, now for the narrower case of a member who verified but abandoned the flow before finishing the username screen. Its own conditional-write logic is unchanged.  
 post-confirmation \- Cognito trigger firing once email-code verification succeeds. As of v1.4 its scope is one job: create the UserProfile record (required because Cognito cannot be queried from the client, so display names would otherwise be unavailable, FR-MEM-10). It no longer claims a username — there is no signup-time Cognito attribute to read anymore (custom:handle is retired, ADR-011); the username step now runs afterward, authenticated, via claim-username.  
-permission-fanout \- DynamoDB stream consumer; see §4.5.
+permission-fanout \- DynamoDB stream consumer; see §4.5. It carries a third responsibility beyond §4.5's two: writing the WatchlistMember(OWNER) row for a newly created watchlist. List creation runs on the generated Watchlist.create() resolver, but WatchlistMember has no user-facing write grant, so nothing on that path can write the owner's own membership row — without it the byUser index (access pattern 3) would never surface a member's own new list back to them. A dedicated createWatchlist Lambda writing both transactionally would close the eventual-consistency window this introduces; the stream already fires on every Watchlist write, so one more Put there was judged the smaller addition, consistent with the eventual consistency itemCount and permission propagation already accept.  
+watchlist-item \- backs the addWatchlistItem mutation. The generated create resolver can only check the editors array the caller just sent, so any authenticated member could have inserted an item into any watchlist by naming its id and listing themselves. This function reads the parent Watchlist server-side, checks Owner-or-Editor, and stamps editors/viewers, addedBy and addedAt itself. Its parent read is a raw DynamoDB GetItem, not an AppSync query — Watchlist's permission fields carry field-level rules naming only user-pool principals, so an IAM-mode read could return exactly those fields nulled. Its write, by contrast, goes back through AppSync deliberately: only a mutation passing through AppSync publishes the onCreateWatchlistItem subscription event §2.4 depends on.  
+delete-account \- NFR-COMP-2. Deletes the caller's profile, saved films, watched records, owned watchlists and other memberships across seven tables. It does not delete the Cognito user: the client calls self-service deleteUser() after this mutation returns. That order is load-bearing — a failure mid-cascade leaves a still-signed-in member who can retry, and every step is idempotent against a partial prior run, whereas the reverse order would strand a signed-out member with orphaned data and no way to retry. Two decisions it encodes: a watchlist the member owns is cascade-deleted in full, collaborators included, rather than blocking deletion pending an ownership transfer; and a watchlist they merely collaborate on is left, with their WatchlistMember row removed, which anonymises their byline on items they added (the detail page builds its labels from current members only) without touching WatchlistItem.addedBy.  
+image-proxy \- CloudFront's origin for cached TMDB artwork (ADR-013, §6). Reached only through an IAM-authenticated Function URL restricted to CloudFront by Origin Access Control; it never sees a direct browser request. Paths are validated against a tight pattern — two known sizes, a flat hash filename — which is the SSRF guard on the upstream fetch.
+
+Two implementation notes that apply across the Lambda-backed custom operations, because both are non-obvious and both were found the hard way:
+
+- **Dispatch is by argument shape, not `event.info.fieldName`.** In this deployment `event.info` arrives undefined for Lambda-backed multi-operation custom queries and mutations, while `event.identity` and `event.arguments` are present. Both tmdb-proxy and membership route on their arguments' own shape instead, which works because each function's operations have mutually distinguishable argument sets.
+- **A raw SDK write must set `createdAt`/`updatedAt` explicitly.** Amplify populates them inside the generated resolver, which membership, permission-fanout, claim-username and delete-account all bypass, and the generated schema marks both non-null — so an item missing one does not merely lack a timestamp, it resolves to null in its entirety on read, via GraphQL null-propagation.
 
 ### 4.3 Authentication and Authorization Modes
 
@@ -328,14 +359,23 @@ allow.ownersDefinedIn('editors') // full CRUD
 allow.ownersDefinedIn('viewers').to(\['read'\]) // read only
 
 Generated resolvers work unmodified, and subscriptions authorize natively because AppSync filters on exactly these fields. See ADR-001 for the alternatives and why they were rejected.  
-Privilege escalation is closed structurally. allow.ownersDefinedIn('editors') would otherwise grant editors update rights on Watchlist including the editors field itself \- allowing an editor to remove the owner. Field-level rules prevent this:
+Privilege escalation is closed structurally. allow.ownersDefinedIn('editors') would otherwise grant editors update rights on Watchlist including the editors field itself \- allowing an editor to remove the owner. Field-level rules prevent this. In Amplify Gen 2, a field's own .authorization() **replaces** the model-level rules for that field rather than adding to them, which is what makes the table below exhaustive:
 
-| Field                     | Write permission                  |
-| :------------------------ | :-------------------------------- |
-| name, description         | owner, editors                    |
-| ownerId, editors, viewers | allow.resource(membershipFn) only |
+| Field                       | Write permission                            |
+| :-------------------------- | :------------------------------------------ |
+| name, description           | owner, editors                              |
+| ownerId                     | owner, on create only — write-once          |
+| editors, viewers, itemCount | nobody, over GraphQL — no create, no update |
 
-No user-facing write path to the permission fields exists at all. FR-MEM-9 therefore holds at the API layer rather than depending on application logic that could be bypassed. An editor mutating the array directly is rejected by AppSync.
+The v1.0 table recorded the permission fields as "allow.resource(membershipFn) only". That was never implementable and the built system is stronger than it described: `allow.resource()` grants a Lambda access _through_ AppSync, and the membership function never goes through AppSync at all. FR-MEM-8 requires an atomic write across Watchlist and WatchlistMember, AppSync has no transactional multi-model mutation, so membership (and delete-account, and permission-fanout) write DynamoDB directly under IAM grants. The correct closure is therefore that **no caller, the Owner included, holds `update` on these fields through the API** — post-creation they are unreachable from any GraphQL request, and those functions' own IAM-granted table access is the only way they ever change. FR-MEM-9 holds at the API layer rather than depending on application logic that could be bypassed.
+
+Three consequences worth stating, each of which was a real hole before it was closed:
+
+- **`ownerId` is the model's ownership field**, via allow.ownerDefinedIn('ownerId').identityClaim('sub'), not merely a string the owner may write. Under a default allow.owner() rule, ownership rode on a separate auto-populated field while ownerId stayed an unconstrained client-supplied string — so a member could create a watchlist carrying someone else's sub, and permission-fanout would then write an OWNER membership row for that victim.
+- **`itemCount` carries no `.default(0)`, and its absence is load-bearing.** Field-level authorization is checked against the mutation's write set, and a default puts the field in that set even when the caller never mentions it — so with `create` granted to nobody, every Watchlist.create() failed on a field the client had not sent. Nothing depends on the zero: DynamoDB's ADD treats a missing number as 0.
+- **WatchlistItem has no `create` grant for anyone.** A generated create resolver can only check that the caller appears in the editors array the caller itself just sent, and watchlistId is likewise part of the create input — so a client-facing create grant let any authenticated member insert an item into any watchlist. Creation goes through the addWatchlistItem mutation (§4.2); update and delete remain client-facing, since both check the item's fan-out-maintained array, which is no longer forgeable.
+
+Member enumeration (NFR-SEC-7) is closed the same structural way. UserProfile and Username both grant `get`, not `read` — `read` generates both the point read and a `list` query, which exposed the entire member directory and every username→userId pair to any signed-in caller. Restricting to `get` removes those queries from the generated schema altogether, leaving only the exact-match lookups §7.1 describes. UserProfile.username additionally carries its own field-level rule granting read to any member and write to nobody: without it, the model-level owner `update` grant covered it, and any member could display a handle they had never claimed — bypassing the sentinel entirely. claim-username therefore writes that field over the raw DynamoDB SDK, since `allow.resource()` has no field-level form that could exempt it.
 
 ### 4.5 Permission Fan-Out
 
@@ -349,6 +389,25 @@ Three properties:
 
 The same function also maintains itemCount from the WatchlistItem stream (§5.4).  
 The hot path is unaffected. Fan-out fires only on membership change, which is rare. Adding a movie writes one item, copying the arrays down from the parent at creation.
+
+### 4.6 Stack Topology and CDK Wiring
+
+Amplify Gen 2 synthesizes each function into a nested CloudFormation stack. Two nested stacks that reference each other cannot be ordered, and CloudFormation fails the deployment with CloudformationStackCircularDependencyError. Most of the non-obvious wiring in `backend.ts` and in the functions' `resource.ts` files exists to keep every such reference one-directional.
+
+The rule: a function that takes any grant on a data-stack resource — a `Table.grant()` in backend.ts, or a schema-level `allow.resource()` — must set `resourceGroupName: 'data'`, merging it into the data stack so the grant becomes an intra-stack edge rather than a return edge against data's existing `.handler()` reference to it. membership, claim-username, delete-account and watchlist-item all do this for that reason. permission-fanout does it for a subtler one: it is not schema-referenced at all, but without an explicit group it lands in the shared catch-all "function" stack alongside tmdb-proxy, whose four `.handler()` references supply the data→stack edge that permission-fanout's own table grants would then close. That leaves an invariant on the catch-all stack — it may hold only functions with no data-stack grant of their own. tmdb-proxy and image-proxy satisfy it today; if image-proxy ever needs a data-stack resource it must move to `'data'` in the same change.
+
+post-confirmation is the mirror case. It is grouped into the **auth** stack, because auth/resource.ts wires it as a Cognito trigger, and the data stack already depends on the auth stack one way (defineData's userPool authorization mode needs the User Pool as its authorizer). A plain Table.grant() to it would create the return edge. `allow.resource(fn)` only ever points data-stack → function's-stack, so it stacks harmlessly on the existing dependency — which is why post-confirmation's UserProfile.create() goes through that grant rather than a raw table grant.
+
+The image CDN (bucket, distribution, Function URL) is created inside image-proxy's own nested stack via `Stack.of()`, not a new sibling stack, for the same reason.
+
+Four further constraints the escape hatches encode:
+
+- **Streams.** Amplify Data's default per-model tables are a `Custom::AmplifyDynamoDBTable` custom resource, not plain CfnTable L1s, so `cfnResources.cfnTables` is empty and the escape hatch is `cfnResources.amplifyDynamoDbTables`, keyed by model name. The wrapper exposes only setters, with no getter for the stream ARN, so backend.ts reaches the underlying CfnResource to `GetAtt('TableStreamArn')` — the table's own `tableStreamArn` is fixed at synth time before the override runs and stays undefined.
+- **Transaction IAM.** `grantReadWriteData()` omits `dynamodb:TransactWriteItems`, and that action alone is not sufficient either: DynamoDB authorizes a transaction against the per-item action of every item in it as well as the call itself. Each grant is scoped to exactly the actions its handler performs.
+- **GSI grants.** `Table.grant()` only authorizes the base table ARN. It adds `${tableArn}/index/*` only for a table that tracked its own `addGlobalSecondaryIndex()` calls, which a reference to an Amplify Data table never does — so every query against a named index needs its own explicit policy statement.
+- **Environment timing.** Table names for the functions that write DynamoDB directly can only be injected in backend.ts, after `backend.data`'s tables exist. They are read via `process.env` rather than the typed `$amplify/env` import, which only reflects environment declared at the `defineFunction` call site.
+
+CloudFront's origin access needs both halves: `FunctionUrlOrigin.withOriginAccessControl()` adds a permission for `lambda:InvokeFunctionUrl`, but the signed origin request is rejected with 403 until the function also allows `lambda:InvokeFunction` from the CloudFront service principal, scoped by sourceArn to the one distribution.
 
 ## 5\. Data Design
 
@@ -394,8 +453,8 @@ Items sort in memory, so no index is required for ordering.
 
 ### 5.4 Derived Counts
 
-FR-LIST-6 requires an item count without loading items. Items are created through generated resolvers, so no server-side hook exists to increment the parent.  
-Resolution: extend permission-fanout into a general stream consumer handling both tables, performing an atomic ADD on Watchlist.itemCount from the WatchlistItem stream.  
+FR-LIST-6 requires an item count without loading items. There is no server-side hook on item writes to increment the parent — and since v1.7 item creation runs through the addWatchlistItem mutation (§4.2) while deletion still runs on the generated resolver, so a hook in the creating function would cover only half the traffic in any case.  
+Resolution: extend permission-fanout into a general stream consumer handling both tables, performing an atomic ADD on Watchlist.itemCount from the WatchlistItem stream. INSERT adds one, REMOVE subtracts one, MODIFY (a reorder or watched-toggle) is ignored. The update is conditioned on `attribute_exists(id)`, since UpdateItem upserts by default and a REMOVE event can arrive after a cascading list deletion has already removed the parent — resurrecting it as a phantom {id, itemCount} row.  
 Rationale: that function already owns cross-table consistency and already has a dead-letter queue. The count becomes eventually consistent alongside permissions \- one consistency story rather than two.
 
 ### 5.5 Cache Table
@@ -444,14 +503,14 @@ The registration requirement itself does real work here: exhausting the TMDB quo
 
 ### 7.1 Security Summary
 
-| Requirement | Mechanism                                                          |
-| :---------- | :----------------------------------------------------------------- |
-| NFR-SEC-1   | AppSync rules; client checks presentational only                   |
-| NFR-SEC-2   | field-level rules; permission fields writable only by membershipFn |
-| NFR-SEC-3   | WAF rate-based rule                                                |
-| NFR-SEC-4   | stream fan-out, bounded by member and item caps                    |
-| NFR-SEC-5   | SSM Parameter Store via secret()                                   |
-| NFR-SEC-7   | handle lookup is exact-match point read; emails never returned     |
+| Requirement | Mechanism                                                                                   |
+| :---------- | :------------------------------------------------------------------------------------------ |
+| NFR-SEC-1   | AppSync rules; client checks presentational only                                            |
+| NFR-SEC-2   | field-level rules; permission fields have no GraphQL write path at all (§4.4)               |
+| NFR-SEC-3   | WAF rate-based rule                                                                         |
+| NFR-SEC-4   | stream fan-out, bounded by member and item caps                                             |
+| NFR-SEC-5   | SSM Parameter Store via secret()                                                            |
+| NFR-SEC-7   | `get`-only grants on UserProfile and Username — no list query exists; emails never returned |
 
 useWatchlistRole centralises client-side permission reasoning in one hook, making it evident by inspection that the client never enforces \- it only avoids rendering controls that would fail server-side.
 
@@ -656,6 +715,9 @@ Stated explicitly rather than discovered later:
 8. Every discovery session now costs a Cognito token exchange before the first TMDB call. Negligible in latency terms against NFR-PERF-1, but it means discovery can no longer be demonstrated with a bare curl against the endpoint.
 9. image-proxy (ADR-013, v1.6) adds CloudFront and S3 to the cost surface, ahead of the cost model §10 still lists as undecided — pay-per-use, so idle cost stays near zero, but not yet reconciled with whatever that model ends up being.
 10. A network that blocks our CloudFront domain specifically (rather than TMDB's) would reproduce the original image-loading failure ADR-013 was written to fix. Not mitigated — out of scope for this release.
+11. Cascade-deleting an owned watchlist (NFR-COMP-2) leaves other collaborators' WatchStatus rows for its items uncleaned. WatchStatus's only secondary index is keyed by userId, so there is no reverse lookup from a watchlistId to the members holding watched state on it. The orphans are inert rather than a leak — nothing queries WatchStatus without a live watchlist context to scope it — but closing this properly needs a new GSI keyed by watchlistId, which is a schema change, not a handler fix.
+12. A new watchlist reaches its creator's /lists screen through a DynamoDB Streams hop rather than synchronously with the create (§4.2). The client seeds its cache directly to hide the window; the same member on a second device sees the list appear a beat later.
+13. The image CDN is the one publicly reachable, unauthenticated surface in the system, bounded only by a reserved-concurrency ceiling rather than a rate limit — see §10.
 
 ## 10\. Open Items
 
@@ -664,3 +726,25 @@ Carried forward from SRS §8:
 - CI/CD pipeline, environment strategy, branch model
 - Observability: logging, metrics, error tracking, alarm thresholds
 - Cost model at expected scale
+
+Raised by the implementation, unresolved:
+
+- **Does V-10 need a carve-out for the image CDN?** The CloudFront distribution FR-TMDB-8 introduced is publicly reachable with no Cognito token, no WAF, and no per-principal throttle. V-10 as written ("Every TMDB-backed operation rejects an unauthenticated caller at the API layer") and NFR-SEC-3's framing of the authentication endpoints as "the only remaining unauthenticated surface" both predate FR-TMDB-8, and v1.6 amended neither. Either those two need an explicit carve-out for opaque public artwork — defensible, since no user data crosses that path — or the surface needs closing. That is a requirements decision, not an implementation one, and it is deliberately not answered in code.
+- **The WAF rule for that distribution is missing.** A reserved-concurrency ceiling of 25 is applied instead, which caps a flood of well-formed but nonexistent image paths (each a distinct CloudFront cache key, so the edge absorbs none of it) and simultaneously guarantees image-proxy those 25, so such a flood can neither exhaust the TMDB quota nor starve the other functions. It is not a rate limit. A WAFv2 ACL scoped to CLOUDFRONT must be created in us-east-1, and Amplify Gen 2 offers no way to place a stack in a region other than the backend's own, so this needs a separate us-east-1 stack wired in by ACL ARN.
+
+## 11\. Implementation Status
+
+Recorded here so the gap between specification and build is explicit rather than discovered by grep. Everything in §1–§8 is built and deployed unless listed below.
+
+**Built:** the full authentication flow (registration, verification, the post-verification username screen, sign-out, account deletion); discovery, search and movie detail over the TMDB proxy; saved films; watchlists with create, item add/remove and the full membership surface (add, remove, leave, change role); watched tracking; real-time synchronisation on /lists/:id; the theme system; and all eight backend functions in §4.1.
+
+**Specified but not yet built:**
+
+| Requirement | Status                                                                                                                                                                                                                                      |
+| :---------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| FR-LIST-2/3 | Renaming and re-describing a list. A feature slice of its own; the detail page has no edit affordance yet.                                                                                                                                  |
+| FR-ITEM-5   | Drag reordering ("should", not "shall"). The fractional-rank helper supports general betweenness already; only append is exercised. dnd-kit is not yet imported anywhere.                                                                   |
+| FR-AUTH-5   | The avatar half. `avatarUrl` is read through the model but nothing writes it — no storage backend is provisioned for uploads.                                                                                                               |
+| §6.1 matrix | The authorization test matrix exists as `it.todo` cells in `tests/auth-matrix/`. This is the largest outstanding gap: §6 calls authorization the system's principal claim to correctness, and it is currently unverified by automated test. |
+
+**Deliberately not built**, each because the data or the requirement to back it does not exist — listed so they are not mistaken for oversights: a decade filter on discovery and a genre filter on search (neither query takes such an argument); search suggestions and per-result synopsis columns (MovieSummary carries neither); an "in N of your lists" count on movie detail and member avatars on the /lists rows (neither is a documented access pattern in §5.2); a credits grid beyond cast (only `credits.cast` is mapped); the sidebar's per-list mini-rows (they need per-list member data this screen does not cheaply have); and changing the sign-in email (no requirement authorizes it).

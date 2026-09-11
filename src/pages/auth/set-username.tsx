@@ -2,19 +2,12 @@ import { useNavigate } from '@tanstack/react-router';
 import { ClaimUsernameForm } from '../../features/claim-username/ui/claim-username-form';
 import { AuthPageShell } from './auth-page-shell';
 
-// FR-AUTH-3/4/5, ADR-011 (v1.4). Reached only once email verification succeeds
-// for a new member (verify.tsx navigates here on mode 'signup') — the session
-// already exists by this point (autoSignIn ran in verify.tsx), which is what
-// makes the live availability check inside ClaimUsernameForm safe to build
-// server-side: it's an authenticated read against the Username sentinel model,
-// not the anonymous query ADR-009/V-10 forbid pre-verification.
+// Reached only once verification succeeds for a new member, so a session already
+// exists — which is what makes the live availability check an authenticated read
+// rather than the anonymous query this app does not permit.
 //
-// The claim + availability-check logic itself lives in
-// features/claim-username (a shared FSD slice, per ADR-011's note that
-// Settings will call the same claimUsername mutation as a recovery path) —
-// this page only supplies the onboarding-specific chrome around it.
-//
-// redirect?: string | undefined — see the matching note in sign-up.tsx.
+// The claim and availability-check logic lives in features/claim-username, shared with
+// Settings' recovery path; this page supplies only the onboarding chrome.
 export function UsernamePage({ redirect }: { redirect?: string | undefined }) {
     const navigate = useNavigate();
 

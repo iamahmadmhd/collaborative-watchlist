@@ -1,8 +1,5 @@
-// Parses an ISO date string and formats it with `Intl.DateTimeFormat`, guarding
-// the two ways this can go wrong: a missing value, and `new Date(iso)` producing
-// an Invalid Date (`getTime()` is NaN) that `Intl.DateTimeFormat` would otherwise
-// happily render as "Invalid Date". Centralised so callers only supply the
-// `Intl.DateTimeFormatOptions` they need instead of re-deriving this guard.
+// Formats an ISO date string, guarding both a missing value and an Invalid Date that
+// Intl.DateTimeFormat would otherwise render as the literal "Invalid Date".
 export function formatIsoDate(iso: string | null | undefined, options: Intl.DateTimeFormatOptions): string | null {
     if (!iso) {
         return null;

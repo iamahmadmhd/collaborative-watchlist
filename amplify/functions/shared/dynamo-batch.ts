@@ -5,19 +5,13 @@ import {
     QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 
-// The document client's own request shape (native JS values), not
-// @aws-sdk/client-dynamodb's WriteRequest (marshalled AttributeValues) — derived from
-// BatchWriteCommandInput itself so it can't drift from what BatchWriteCommand actually accepts.
+// The document client's request shape (native JS values), not client-dynamodb's
+// marshalled WriteRequest. Derived from BatchWriteCommandInput so it cannot drift.
 export type WriteRequest = NonNullable<BatchWriteCommandInput['RequestItems']>[string][number];
 
-// Shared between permission-fanout and delete-account, the two functions that page
-// through a full DynamoDB Query result and/or chunk a DynamoDB BatchWriteItem call —
-// same pagination loop and same 25-item-chunk/retry/backoff shape in both, previously
-// duplicated verbatim (one for Puts, one for Deletes). Both callers already share the
-// same idempotency story that makes retrying here safe: permission-fanout's writes are
-// unconditional overwrites (§4.5's "overwrite, not delta"), delete-account's deletes are
-// no-ops against an already-gone key — so backoff here is throughput contention only,
-// never a correctness concern.
+// Shared by permission-fanout and delete-account. Retrying here is safe because both
+// callers' writes are idempotent — unconditional overwrites in one, deletes of
+// already-absent keys in the other — so backoff is a throughput concern only.
 
 const BATCH_WRITE_CHUNK_SIZE = 25; // DynamoDB's hard per-call BatchWriteItem limit
 const MAX_BATCH_WRITE_RETRIES = 5;
@@ -57,9 +51,8 @@ export async function queryAllPages(
     return items;
 }
 
-// Callers pass pre-built WriteRequests (PutRequest or DeleteRequest) — DynamoDB hands
-// back unprocessed items in that same WriteRequest shape, so retries requeue them
-// directly with no unwrap/rewrap step.
+// DynamoDB returns unprocessed items in the same WriteRequest shape callers pass in,
+// so a retry requeues them directly.
 export async function batchWriteChunked(
     docClient: DynamoDBDocumentClient,
     tableName: string,

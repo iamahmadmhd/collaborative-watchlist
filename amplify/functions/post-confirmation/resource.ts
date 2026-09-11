@@ -1,8 +1,7 @@
 import { defineFunction } from '@aws-amplify/backend';
 
-// System Design §4.2. resourceGroupName: 'auth' groups this Cognito trigger with
-// the auth stack rather than the default function group — required because it's
-// wired via triggers in ../../auth/resource.ts.
+// Grouped into the auth stack because it is wired as a Cognito trigger in
+// ../../auth/resource.ts. See System Design §4.6.
 export const postConfirmation = defineFunction({
     name: 'post-confirmation',
     resourceGroupName: 'auth',

@@ -14,21 +14,10 @@ export interface MyWatchlist {
     updatedAt: string | null;
 }
 
-// FR-LIST-5, System Design §5.2 access pattern 3 ("my lists with role" -> the
-// WatchlistMember byUser index). §5.1 explains why this is one query rather than
-// two merged client-side: WatchlistMember carries an OWNER row for the owner too,
-// so byUser surfaces every list a member has any relationship to. It carries only
-// watchlistId + role though, not the parent's display fields, so each membership
-// still needs its own Watchlist.get() for name/description/itemCount — run in
-// parallel, bounded by how many lists one member belongs to (a handful, not a
-// pagination-worthy count).
-//
-// Member avatars/count per row (docs/design Watchlists.dc.html) are left out: §5.2
-// has no access pattern for them on this screen (only pattern 6, "members and
-// roles", scoped to /lists/:id) and Watchlist carries no memberCount the way it
-// does itemCount (§5.4) — showing them here would mean an extra WatchlistMember
-// query per list on every /lists load, which isn't a documented access pattern.
-// Flagging rather than silently adding it (CLAUDE.md).
+// One query against the WatchlistMember byUser index: that table carries an OWNER row
+// too, so it surfaces every list a member has any relationship to. It holds no display
+// fields, so each membership needs its own Watchlist.get(), run in parallel and bounded
+// by how many lists one member belongs to.
 export function useWatchlists() {
     return useQuery({
         queryKey: WATCHLISTS_QUERY_KEY,
@@ -37,14 +26,9 @@ export function useWatchlists() {
             const { data: memberships } = await client.models.WatchlistMember.listWatchlistMemberByUserId({ userId });
 
             const watchlists = await Promise.all(
-                // A membership entry can itself be null: GraphQL null-propagation nulls an
-                // individual list item when one of its non-null fields fails to resolve
-                // (e.g. a row missing createdAt/updatedAt — see permission-fanout/handler.ts
-                // and membership/handler.ts's own comments on why that could happen for a
-                // raw-SDK-written WatchlistMember row). Skipping it here is a defensive
-                // backstop, not the fix for that; a membership silently missing from this
-                // list is still a data-integrity bug worth surfacing separately, not one
-                // this read path can repair.
+                // A membership entry can be null: GraphQL null-propagation nulls a list
+                // item whose non-null field fails to resolve. Skipping it is a backstop,
+                // not a repair — a missing membership is still a data-integrity bug.
                 memberships.map(async (membership) => {
                     if (!membership || !membership.role) {
                         return null;
@@ -59,9 +43,7 @@ export function useWatchlists() {
     });
 }
 
-// Exported for features/create-watchlist: a freshly created Watchlist response
-// already has everything this shape needs (see that hook's own comment on why
-// it seeds the cache with this instead of invalidating).
+// Exported for features/create-watchlist, which seeds this cache directly.
 export function toMyWatchlist(watchlist: WatchlistRecord, role: WatchlistRole): MyWatchlist {
     return {
         id: watchlist.id,

@@ -3,8 +3,7 @@ import { z } from 'zod';
 import { SearchPage } from '../../../pages/search/search-page';
 import { AppShell } from '../../layouts/app-shell';
 
-// FR-DISC-2/5. `.catch()` on both fields, matching discover-search.ts's
-// recovery style — a hand-edited or stale URL falls back to an empty search
+// `.catch()` on both fields: a hand-edited or stale URL falls back to an empty search
 // rather than a route error.
 const searchSchema = z.object({
     q: z.string().catch(''),

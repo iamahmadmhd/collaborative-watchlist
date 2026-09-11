@@ -3,15 +3,10 @@ import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
 import { useOptimisticMutation } from '../../../shared/lib/use-optimistic-mutation';
 
-// FR-WATCH-1..4, System Design §5.2 access pattern 5 / §5.1's WatchStatus row
-// ((userId, itemId) primary key, watchlistId + watchedAt as plain attributes).
-// The identifier is NOT (userId, watchlistId, tmdbId) — just (userId, itemId) —
-// so a bare tmdbId can't be the itemId value: the same film in two different
-// watchlists would collide on one WatchStatus row and "watched in list A" would
-// leak into list B. `watchedItemId` composes watchlistId into the key so watched
-// state stays scoped to one watchlist's entry, matching FR-WATCH-1's "item on a
-// watchlist" framing (not "a film" globally). watchlistId is stored again as a
-// plain attribute solely so the byUserAndList GSI can filter to one list.
+// WatchStatus is keyed (userId, itemId), so a bare tmdbId cannot be the itemId: the
+// same film in two watchlists would collide on one row and "watched in list A" would
+// leak into list B. `watchedItemId` composes watchlistId into the key instead.
+// watchlistId is stored again as a plain attribute purely for the byUserAndList GSI.
 function watchedItemId(watchlistId: string, tmdbId: string): string {
     return `${watchlistId}#${tmdbId}`;
 }
@@ -20,9 +15,8 @@ function watchStatusQueryKey(watchlistId: string) {
     return ['watch-status', watchlistId];
 }
 
-// FR-WATCH-3: allow.owner() on WatchStatus (amplify/data/resource.ts) already
-// scopes every read to the caller's own rows server-side — no explicit userId
-// filter needed for authorization, only to satisfy the GSI's partition key.
+// allow.owner() already scopes every read to the caller's own rows; the userId here
+// satisfies the GSI's partition key, not authorization.
 export function useWatchedSet(watchlistId: string) {
     return useQuery({
         queryKey: watchStatusQueryKey(watchlistId),
@@ -38,11 +32,9 @@ export function useWatchedSet(watchlistId: string) {
     });
 }
 
-// FR-WATCH-1/2. Optimistic update with rollback (System Design §7.2, via
-// shared/lib/use-optimistic-mutation.ts) — this is a private per-member toggle
-// with no subscription counterpart (WatchStatus carries no editors/viewers
-// array to authorize one), so the query cache here is the only place this
-// state lives client-side.
+// A private per-member toggle with no subscription counterpart — WatchStatus carries no
+// permission arrays to authorize one — so this cache is the only place the state lives
+// client-side.
 export function useToggleWatched(watchlistId: string) {
     return useOptimisticMutation<{ tmdbId: string; isWatched: boolean }, Set<string>>({
         queryKey: () => watchStatusQueryKey(watchlistId),

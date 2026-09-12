@@ -2,7 +2,19 @@
 
 ## Repertory — Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.7 Date: 11 September 2026 Companion to: SRS v1.6
+Version: 1.8 Date: 12 September 2026 Companion to: SRS v1.7
+
+Revision note (v1.8): Watched state moves out of its own table and onto the item it
+describes. SRS v1.7 made the state shared rather than private, which removed the reason
+`WatchStatus` was a separate owner-scoped model; a reported bug — a removed item still
+counting as watched — showed the cost of that separation, since nothing mapped an item
+back to the watched rows referring to it. `WatchlistItem.watchedBy` replaces the table,
+so the mark cannot outlive the item that carries it and the whole class of orphan
+disappears rather than being cleaned up after. A ninth function, `toggle-watched`, is
+the field's only writer. Known Limitation #11 is retired: the reverse-lookup problem it
+described no longer exists. Access pattern 5 is gone with the table, so opening a list
+costs two queries instead of three. Affected: §4.1, §4.2, §4.4, §5.1, §5.2, §5.4, §9,
+§11, and ADR-014 (new).
 
 Revision note (v1.7): No requirement changed. This revision reconciles the document
 with the implementation as built, and absorbs the rationale that had accumulated in
@@ -313,18 +325,20 @@ amplify/
     claim-username/             username claim — primary path again in v1.4
     permission-fanout/          DynamoDB stream consumer (permissions, itemCount, owner row)
     watchlist-item/             addWatchlistItem — parent-authorized item creation
-    delete-account/             NFR-COMP-2 cascade across seven tables
+    toggle-watched/             toggleWatched — the only writer of WatchlistItem.watchedBy (ADR-014)
+    delete-account/             NFR-COMP-2 cascade across six tables
     image-proxy/                CloudFront origin for cached TMDB artwork (ADR-013)
     shared/                     helpers shared between the transactional functions
 ```
 
-Eight functions. The restraint the original five expressed still holds — list CRUD, saves, and watch status all run on Amplify's generated resolvers, and every added Lambda is a cold start, an IAM policy, a log group, and a place for defects to hide — but three more proved structurally necessary after v1.0:
+Nine functions. The restraint the original five expressed still holds — list CRUD and saves run on Amplify's generated resolvers, and every added Lambda is a cold start, an IAM policy, a log group, and a place for defects to hide — but four more proved structurally necessary after v1.0:
 
 - watchlist-item, because the generated create resolver cannot authorize a WatchlistItem against its parent (§4.4).
 - delete-account, because NFR-COMP-2's cascade writes fields that have no GraphQL write path at all (§4.4).
 - image-proxy, because FR-TMDB-8 needs an origin to fetch and cache artwork (ADR-013). It is not schema-referenced and is not part of the GraphQL surface.
+- toggle-watched, because watchedBy must be writable by a Viewer but not by an Editor, and no arrangement of generated resolvers expresses that (ADR-014).
 
-Item creation is therefore the one entry in §4.1's original "runs on generated resolvers" list that no longer does.
+Item creation and watch status are therefore the two entries in §4.1's original "runs on generated resolvers" list that no longer do.
 
 ### 4.2 Functions
 
@@ -332,6 +346,7 @@ tmdb-proxy \- handles all four TMDB queries in one function, routing on the Grap
 membership \- the transactional one. Adding a collaborator writes a WatchlistMember record and pushes the user into the parent's editors or viewers array: two tables, and FR-MEM-8 forbids an observable partial result. TransactWriteItems provides atomicity. Generated resolvers write one item each and cannot satisfy this. Remove and leave are the same transaction inverted, with different role checks.  
 claim-username \- conditional write against the Username table keyed on the username string, conditioned on attribute\_not\_exists. The mechanism behind FR-AUTH-4 and V-1. Revised again in v1.4 (ADR-011): back to being the primary path, called from the new post-verification username screen (§2.5) with an authenticated session already established, rather than solely a Settings recovery mechanism (v1.2's framing). Settings still calls the same function, now for the narrower case of a member who verified but abandoned the flow before finishing the username screen. Its own conditional-write logic is unchanged.  
 post-confirmation \- Cognito trigger firing once email-code verification succeeds. As of v1.4 its scope is one job: create the UserProfile record (required because Cognito cannot be queried from the client, so display names would otherwise be unavailable, FR-MEM-10). It no longer claims a username — there is no signup-time Cognito attribute to read anymore (custom:handle is retired, ADR-011); the username step now runs afterward, authenticated, via claim-username.  
+toggle-watched \- the only writer of WatchlistItem.watchedBy. Two constraints meet in this function and no generated resolver satisfies both. FR-WATCH-1 lets any member who can read an item mark it, Viewers included, but WatchlistItem grants Viewers `read` only, and model-level authorization gates the mutation itself — so no field-level rule can ever hand a Viewer a way in. FR-WATCH-5 makes each member's mark theirs alone, so the field must stay unwritable by every GraphQL caller, Editors included, or an Editor could forge one. Taking the write off AppSync resolves both: the function reads the item, authorizes the caller against its own fan-out-maintained editors/viewers arrays, and writes the single element belonging to that caller. Marking appends with `list_append` under a `NOT contains` guard, so two members marking the same item concurrently cannot lose each other's write and a repeated call is idempotent; unmarking removes by index under a positional condition, because DynamoDB deletes a list element by position and a position read a moment ago is only valid while nobody else has shifted the list — the condition catches that and the bounded retry re-reads. Unlike watchlist-item there is no AppSync write-back, so no subscription event is published; see ADR-014's consequences.  
 permission-fanout \- DynamoDB stream consumer; see §4.5. It carries a third responsibility beyond §4.5's two: writing the WatchlistMember(OWNER) row for a newly created watchlist. List creation runs on the generated Watchlist.create() resolver, but WatchlistMember has no user-facing write grant, so nothing on that path can write the owner's own membership row — without it the byUser index (access pattern 3) would never surface a member's own new list back to them. A dedicated createWatchlist Lambda writing both transactionally would close the eventual-consistency window this introduces; the stream already fires on every Watchlist write, so one more Put there was judged the smaller addition, consistent with the eventual consistency itemCount and permission propagation already accept.  
 watchlist-item \- backs the addWatchlistItem mutation. The generated create resolver can only check the editors array the caller just sent, so any authenticated member could have inserted an item into any watchlist by naming its id and listing themselves. This function reads the parent Watchlist server-side, checks Owner-or-Editor, and stamps editors/viewers, addedBy and addedAt itself. Its parent read is a raw DynamoDB GetItem, not an AppSync query — Watchlist's permission fields carry field-level rules naming only user-pool principals, so an IAM-mode read could return exactly those fields nulled. Its write, by contrast, goes back through AppSync deliberately: only a mutation passing through AppSync publishes the onCreateWatchlistItem subscription event §2.4 depends on.  
 delete-account \- NFR-COMP-2. Deletes the caller's profile, saved films, watched records, owned watchlists and other memberships across seven tables. It does not delete the Cognito user: the client calls self-service deleteUser() after this mutation returns. That order is load-bearing — a failure mid-cascade leaves a still-signed-in member who can retry, and every step is idempotent against a partial prior run, whereas the reverse order would strand a signed-out member with orphaned data and no way to retry. Two decisions it encodes: a watchlist the member owns is cascade-deleted in full, collaborators included, rather than blocking deletion pending an ownership transfer; and a watchlist they merely collaborate on is left, with their WatchlistMember row removed, which anonymises their byline on items they added (the detail page builds its labels from current members only) without touching WatchlistItem.addedBy.  
@@ -361,11 +376,12 @@ allow.ownersDefinedIn('viewers').to(\['read'\]) // read only
 Generated resolvers work unmodified, and subscriptions authorize natively because AppSync filters on exactly these fields. See ADR-001 for the alternatives and why they were rejected.  
 Privilege escalation is closed structurally. allow.ownersDefinedIn('editors') would otherwise grant editors update rights on Watchlist including the editors field itself \- allowing an editor to remove the owner. Field-level rules prevent this. In Amplify Gen 2, a field's own .authorization() **replaces** the model-level rules for that field rather than adding to them, which is what makes the table below exhaustive:
 
-| Field                       | Write permission                            |
-| :-------------------------- | :------------------------------------------ |
-| name, description           | owner, editors                              |
-| ownerId                     | owner, on create only — write-once          |
-| editors, viewers, itemCount | nobody, over GraphQL — no create, no update |
+| Field                          | Write permission                            |
+| :----------------------------- | :------------------------------------------ |
+| name, description              | owner, editors                              |
+| ownerId                        | owner, on create only — write-once          |
+| editors, viewers, itemCount    | nobody, over GraphQL — no create, no update |
+| WatchlistItem.watchedBy (v1.8) | nobody, over GraphQL — no create, no update |
 
 The v1.0 table recorded the permission fields as "allow.resource(membershipFn) only". That was never implementable and the built system is stronger than it described: `allow.resource()` grants a Lambda access _through_ AppSync, and the membership function never goes through AppSync at all. FR-MEM-8 requires an atomic write across Watchlist and WatchlistMember, AppSync has no transactional multi-model mutation, so membership (and delete-account, and permission-fanout) write DynamoDB directly under IAM grants. The correct closure is therefore that **no caller, the Owner included, holds `update` on these fields through the API** — post-creation they are unreachable from any GraphQL request, and those functions' own IAM-granted table access is the only way they ever change. FR-MEM-9 holds at the API layer rather than depending on application logic that could be bypassed.
 
@@ -373,6 +389,7 @@ Three consequences worth stating, each of which was a real hole before it was cl
 
 - **`ownerId` is the model's ownership field**, via allow.ownerDefinedIn('ownerId').identityClaim('sub'), not merely a string the owner may write. Under a default allow.owner() rule, ownership rode on a separate auto-populated field while ownerId stayed an unconstrained client-supplied string — so a member could create a watchlist carrying someone else's sub, and permission-fanout would then write an OWNER membership row for that victim.
 - **`itemCount` carries no `.default(0)`, and its absence is load-bearing.** Field-level authorization is checked against the mutation's write set, and a default puts the field in that set even when the caller never mentions it — so with `create` granted to nobody, every Watchlist.create() failed on a field the client had not sent. Nothing depends on the zero: DynamoDB's ADD treats a missing number as 0.
+- **`WatchlistItem.watchedBy` denies `update` to every caller, for a reason unrelated to permissions.** It is not a permission field — nothing authorizes off it — but it is the one field on the row that a member must write and must not be able to write on anyone else's behalf (FR-WATCH-5). Left to the model-level rules, the Editor `update` grant would cover it, and one Editor could mark an item watched for every other member or clear their marks. The rule that closes this also closes the ordinary write path, so `toggle-watched` writes it over the raw DynamoDB SDK — the same wall claim-username hits, and for the same reason: `allow.resource()` has no field-level form. See ADR-014.
 - **WatchlistItem has no `create` grant for anyone.** A generated create resolver can only check that the caller appears in the editors array the caller itself just sent, and watchlistId is likewise part of the create input — so a client-facing create grant let any authenticated member insert an item into any watchlist. Creation goes through the addWatchlistItem mutation (§4.2); update and delete remain client-facing, since both check the item's fan-out-maintained array, which is no longer forgeable.
 
 Member enumeration (NFR-SEC-7) is closed the same structural way. UserProfile and Username both grant `get`, not `read` — `read` generates both the point read and a `list` query, which exposed the entire member directory and every username→userId pair to any signed-in caller. Restricting to `get` removes those queries from the generated schema altogether, leaving only the exact-match lookups §7.1 describes. UserProfile.username additionally carries its own field-level rule granting read to any member and write to nobody: without it, the model-level owner `update` grant covered it, and any member could display a handle they had never claimed — bypassing the sentinel entirely. claim-username therefore writes that field over the raw DynamoDB SDK, since `allow.resource()` has no field-level form that could exempt it.
@@ -413,15 +430,14 @@ CloudFront's origin access needs both halves: `FunctionUrlOrigin.withOriginAcces
 
 ### 5.1 Models
 
-| Model           | Primary key           | Notes                                                 |
-| :-------------- | :-------------------- | :---------------------------------------------------- |
-| UserProfile     | id (Cognito sub)      | username, displayName, avatarUrl                      |
-| Username        | username              | uniqueness sentinel; conditional write target         |
-| Watchlist       | id                    | ownerId, editors\[\], viewers\[\], itemCount          |
-| WatchlistMember | (watchlistId, userId) | role, joinedAt                                        |
-| WatchlistItem   | (watchlistId, tmdbId) | snapshot, addedBy, position, editors\[\], viewers\[\] |
-| SavedMovie      | (userId, tmdbId)      | snapshot, savedAt                                     |
-| WatchStatus     | (userId, itemId)      | watchlistId, watchedAt                                |
+| Model           | Primary key           | Notes                                                                |
+| :-------------- | :-------------------- | :------------------------------------------------------------------- |
+| UserProfile     | id (Cognito sub)      | username, displayName, avatarUrl                                     |
+| Username        | username              | uniqueness sentinel; conditional write target                        |
+| Watchlist       | id                    | ownerId, editors\[\], viewers\[\], itemCount                         |
+| WatchlistMember | (watchlistId, userId) | role, joinedAt                                                       |
+| WatchlistItem   | (watchlistId, tmdbId) | snapshot, addedBy, position, editors\[\], viewers\[\], watchedBy\[\] |
+| SavedMovie      | (userId, tmdbId)      | snapshot, savedAt                                                    |
 
 Composite primary keys do substantial work. Amplify's generated create resolver includes an attribute\_not\_exists condition on the primary key, which gives FR-ITEM-2 \- no duplicate film in a list \- at the database layer, with no check-then-write race. The same holds for double-saving and duplicate membership.  
 WatchlistMember includes owners, with role OWNER. Without this, listing a member's watchlists requires two queries merged client-side. One uniform membership table simplifies every read path.  
@@ -435,14 +451,13 @@ WatchlistMember and the permission arrays are not redundant. The arrays feed App
 | 2   | discovery grid | is this film saved?       | in-memory set, one query per session |
 | 3   | /lists         | my lists with role        | WatchlistMember GSI byUser           |
 | 4   | /lists/:id     | items in list             | WatchlistItem PK query               |
-| 5   | /lists/:id     | my watched state          | WatchStatus GSI byUserAndList        |
-| 6   | /lists/:id     | members and roles         | WatchlistMember PK query             |
-| 7   | /lists/:id     | my role                   | point read                           |
-| 8   | add member     | @username → user          | Username point read                  |
+| 5   | /lists/:id     | members and roles         | WatchlistMember PK query             |
+| 6   | /lists/:id     | my role                   | point read                           |
+| 7   | add member     | @username → user          | Username point read                  |
 
 Pattern 2 warrants emphasis. FR-SAVE-2 requires a saved state on every card in a discovery grid. Per-card lookup is 20 point reads per scroll. Instead, the user's saved tmdbId values are fetched once into a Set and checked in memory \- saved films are personal-scale, a few hundred at most. Invalidated on save or unsave.  
-Pattern 7 is a genuine point read thanks to the composite key, which matters because useWatchlistRole runs on every render of the detail page.  
-Opening a watchlist costs three queries \- items, members, own watch status \- independent of item count, satisfying NFR-PERF-2.
+Pattern 6 is a genuine point read thanks to the composite key, which matters because useWatchlistRole runs on every render of the detail page.  
+Opening a watchlist costs two queries \- items and members - independent of item count, satisfying NFR-PERF-2. It cost three until v1.8: watched state arrived on its own query against a separate table, and now rides the item rows (ADR-014).
 
 ### 5.3 Ordering
 
@@ -454,7 +469,7 @@ Items sort in memory, so no index is required for ordering.
 ### 5.4 Derived Counts
 
 FR-LIST-6 requires an item count without loading items. There is no server-side hook on item writes to increment the parent — and since v1.7 item creation runs through the addWatchlistItem mutation (§4.2) while deletion still runs on the generated resolver, so a hook in the creating function would cover only half the traffic in any case.  
-Resolution: extend permission-fanout into a general stream consumer handling both tables, performing an atomic ADD on Watchlist.itemCount from the WatchlistItem stream. INSERT adds one, REMOVE subtracts one, MODIFY (a reorder or watched-toggle) is ignored. The update is conditioned on `attribute_exists(id)`, since UpdateItem upserts by default and a REMOVE event can arrive after a cascading list deletion has already removed the parent — resurrecting it as a phantom {id, itemCount} row.  
+Resolution: extend permission-fanout into a general stream consumer handling both tables, performing an atomic ADD on Watchlist.itemCount from the WatchlistItem stream. INSERT adds one, REMOVE subtracts one, MODIFY (a reorder, a permission fan-out, or a watched-toggle — the last of these a real WatchlistItem write since v1.8) is ignored. The update is conditioned on `attribute_exists(id)`, since UpdateItem upserts by default and a REMOVE event can arrive after a cascading list deletion has already removed the parent — resurrecting it as a phantom {id, itemCount} row.  
 Rationale: that function already owns cross-table consistency and already has a dead-letter queue. The count becomes eventually consistent alongside permissions \- one consistency story rather than two.
 
 ### 5.5 Cache Table
@@ -701,6 +716,32 @@ Consequences:
 - A network-level block on our own CloudFront domain would reproduce the original failure — no defense against that is claimed here, only against TMDB's CDN specifically being blocked.
 - Image bytes are cached for up to 90 days (S3 lifecycle expiry) before a re-fetch from TMDB; TMDB image paths are content-addressed, so a cache hit is never stale in a way that matters, only occasionally superseded by a re-shot image at the same path (same class of drift as Known Limitations #3).
 
+### ADR-014 \- watchedBy on WatchlistItem over a separate WatchStatus table
+
+Status: Accepted  
+Context: A member reported that marking an item watched and then removing it left the list still counting it — "1 of 0 watched". The cause was structural, not a missing line: watched state lived in `WatchStatus`, keyed (userId, itemId) with `itemId` composed as `${watchlistId}#${tmdbId}`, and nothing deleted those rows when the item went. No client could fix it either, since `allow.owner()` lets a caller delete only their own row while an item removal by an Editor orphans every other member's. The table's only index was keyed by userId, so no reverse lookup from an item to the rows referring to it existed — the same gap Known Limitation #11 recorded for the watchlist-deletion path. Separately, SRS v1.7 inverted FR-WATCH-3: watched state is now shared across a list's members, which removes the privacy requirement that made a per-member owner-scoped table necessary in the first place.  
+Decision: Drop the `WatchStatus` model and carry watched state as `WatchlistItem.watchedBy`, an array of member ids on the item itself. Add `toggle-watched` (§4.2) as the field's only writer.  
+Options considered:
+
+| Option                                                | Benefit                                                                                                        | Cost                                                                                                                                  |
+| :---------------------------------------------------- | :------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ |
+| A. Client deletes its own WatchStatus row on removal  | no schema change, no migration                                                                                 | fixes nothing — every other member's row still orphans, and `allow.owner()` makes it unfixable from a client by construction          |
+| B. New GSI on WatchStatus keyed (watchlistId, itemId) | purely additive, no migration; permission-fanout's existing WatchlistItem REMOVE branch does the cleanup       | the orphan stays possible and merely gets swept; a second index, and a backfill for rows already orphaned                             |
+| C. Flip WatchStatus's key to (itemId, userId)         | reverse lookup for free, no GSI, privacy preserved had it still been required                                  | a primary-key change is a table replacement and a migration; the orphan is still swept rather than prevented                          |
+| D. watchedBy on WatchlistItem                         | the mark cannot outlive its item, so the orphan is impossible rather than cleaned up; one fewer query per list | a migration; watched state becomes readable by every member; a new function, because no generated resolver can express the write rule |
+
+Decision: Option D.  
+Rationale: B and C both leave a handler responsible for remembering to delete something, which is the shape of defect that produced the bug. D removes the failure mode instead of catching it — NFR-REL-4 becomes true by construction, and NFR-REL-3's watched-record clause holds for free. D's headline cost, that every member can now read the marks, stopped being a cost when SRS v1.7 made it the requirement; before that inversion D would have been unimplementable without hiding the array behind a computed resolver and taking the real-time path apart to do it. A is recorded because it was the first thing tried and it is worth being explicit that it is not a partial fix but no fix at all.  
+Consequences:
+
+- New: `amplify/functions/toggle-watched/`, and `WatchlistItem.watchedBy` with a field-level rule granting `read` to editors/viewers and `update` to nobody. The rule is load-bearing: without it the model-level Editor `update` grant would reach the field and let an Editor forge another member's mark (FR-WATCH-5, V-3).
+- Gone: the `WatchStatus` model, its `byUserAndList` index, access pattern 5, `useWatchedSet`, and Known Limitation #11.
+- The detail page derives both the item count and the watched count from one array, so they can no longer disagree — which is the reported bug's actual symptom, independent of the orphan behind it.
+- `features/toggle-watched` becomes a fourth optimistic writer into the `['watchlist-items', id]` cache entry (§2.4). It is self-echo-safe for the same reason `manage-list-items` is: the key is tmdbId, known client-side.
+- Watched state is not live-propagated. The write bypasses AppSync — it has to, since the field denies `update` to every GraphQL principal and `allow.resource()` has no field-level form to exempt a function — so no `onUpdate` event is published, and another member sees a mark on their next refetch. FR-SYNC-1 covers additions, removals and reorderings only, so this is within requirement; closing it would mean a custom JS resolver over the DynamoDB data source plus a custom subscription `.for(toggleWatched)`, and is deliberately left out of this change.
+- A member's marks survive their removal from a list, rendering as "A former member" (FR-WATCH-6), consistent with §4.2's treatment of their byline on items they added. Account deletion is the exception: NFR-COMP-2 counts the marks as the member's own data, so `delete-account` strips them from every list it leaves.
+- Migration is two-phase and one-way: `watchedBy` must ship and be backfilled from `WatchStatus` (`pnpm migrate:watched-by`) before the model is dropped, because dropping it drops the table. See the script header.
+
 ## 9\. Known Limitations
 
 Stated explicitly rather than discovered later:
@@ -715,7 +756,7 @@ Stated explicitly rather than discovered later:
 8. Every discovery session now costs a Cognito token exchange before the first TMDB call. Negligible in latency terms against NFR-PERF-1, but it means discovery can no longer be demonstrated with a bare curl against the endpoint.
 9. image-proxy (ADR-013, v1.6) adds CloudFront and S3 to the cost surface, ahead of the cost model §10 still lists as undecided — pay-per-use, so idle cost stays near zero, but not yet reconciled with whatever that model ends up being.
 10. A network that blocks our CloudFront domain specifically (rather than TMDB's) would reproduce the original image-loading failure ADR-013 was written to fix. Not mitigated — out of scope for this release.
-11. Cascade-deleting an owned watchlist (NFR-COMP-2) leaves other collaborators' WatchStatus rows for its items uncleaned. WatchStatus's only secondary index is keyed by userId, so there is no reverse lookup from a watchlistId to the members holding watched state on it. The orphans are inert rather than a leak — nothing queries WatchStatus without a live watchlist context to scope it — but closing this properly needs a new GSI keyed by watchlistId, which is a schema change, not a handler fix.
+11. ~~Cascade-deleting an owned watchlist leaves other collaborators' WatchStatus rows uncleaned.~~ Retired in v1.8. The limitation was a symptom of watched state living in a table with no reverse lookup from an item; ADR-014 moved it onto the item, so there is nothing left to orphan. The same root cause produced a user-visible bug on the ordinary single-item removal path, which is what prompted the change — see NFR-REL-4.
 12. A new watchlist reaches its creator's /lists screen through a DynamoDB Streams hop rather than synchronously with the create (§4.2). The client seeds its cache directly to hide the window; the same member on a second device sees the list appear a beat later.
 13. The image CDN is the one publicly reachable, unauthenticated surface in the system, bounded only by a reserved-concurrency ceiling rather than a rate limit — see §10.
 
@@ -736,7 +777,7 @@ Raised by the implementation, unresolved:
 
 Recorded here so the gap between specification and build is explicit rather than discovered by grep. Everything in §1–§8 is built and deployed unless listed below.
 
-**Built:** the full authentication flow (registration, verification, the post-verification username screen, sign-out, account deletion); discovery, search and movie detail over the TMDB proxy; saved films; watchlists with create, item add/remove and the full membership surface (add, remove, leave, change role); watched tracking; real-time synchronisation on /lists/:id; the theme system; and all eight backend functions in §4.1.
+**Built:** the full authentication flow (registration, verification, the post-verification username screen, sign-out, account deletion); discovery, search and movie detail over the TMDB proxy; saved films; watchlists with create, item add/remove and the full membership surface (add, remove, leave, change role); watched tracking, shared across members since v1.8 (ADR-014); real-time synchronisation on /lists/:id; the theme system; and all nine backend functions in §4.1.
 
 **Specified but not yet built:**
 

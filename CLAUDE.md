@@ -159,6 +159,14 @@ of these categories, you're duplicating an owner — don't.
   can only check the arrays the caller itself sent.
 - `WatchlistItem` carries denormalised `editors`/`viewers` arrays copied from its parent
   (ADR-001). Don't "clean this up" into a parent lookup — that breaks subscription authorization.
+- `WatchlistItem.watchedBy` holds watched state (ADR-014; there is no `WatchStatus` table — if you
+  find a reference to one, it's stale). It denies `update` to every GraphQL caller for an integrity
+  reason, not a permission one: with the model-level Editor `update` grant reaching it, one Editor
+  could mark or unmark films on every other member's behalf (FR-WATCH-5, V-3). `toggle-watched` is
+  its only writer, over direct DynamoDB — the same reason `claim-username` writes
+  `UserProfile.username` that way. Watched state is shared, not private: SRS v1.7 inverted
+  FR-WATCH-3, so every member sees every member's marks. A mark survives its member's removal from
+  the list and renders as a former member (FR-WATCH-6) — don't "fix" that by stripping it.
 - Every cell of the SRS §6.1 authorization matrix needs an automated test **against the API**,
   not the UI. A passing UI test that a button is hidden proves nothing about the security property.
 - Route guards (v1.1): every route outside the auth group sits behind a `beforeLoad` check on

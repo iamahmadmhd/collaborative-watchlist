@@ -1,6 +1,6 @@
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { tv } from 'tailwind-variants';
-import { useToggleWatched } from '../api/watch-status';
+import { useToggleWatched } from '../api/toggle-watched';
 
 // Any member who can read the item may toggle it, Viewers included — unlike the
 // Editor-only remove control beside it, so there is no gating prop here.

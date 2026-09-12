@@ -5,6 +5,7 @@ import { tmdbProxy } from '../functions/tmdb-proxy/resource';
 import { membership } from '../functions/membership/resource';
 import { deleteAccount } from '../functions/delete-account/resource';
 import { watchlistItem } from '../functions/watchlist-item/resource';
+import { toggleWatched } from '../functions/toggle-watched/resource';
 
 const schema = a
     .schema({
@@ -127,6 +128,16 @@ const schema = a
                 // Denormalised from the parent Watchlist, kept in sync by permission-fanout.
                 editors: a.string().array(),
                 viewers: a.string().array(),
+                // A field's own rule replaces the model-level ones for that field: read
+                // for every member, `update` for nobody. toggle-watched is the only
+                // writer, over direct DynamoDB. See System Design §4.4 and ADR-014.
+                watchedBy: a
+                    .string()
+                    .array()
+                    .authorization((allow) => [
+                        allow.ownersDefinedIn('editors').to(['read']),
+                        allow.ownersDefinedIn('viewers').to(['read']),
+                    ]),
             })
             .identifier(['watchlistId', 'tmdbId'])
             .authorization((allow) => [
@@ -150,17 +161,6 @@ const schema = a
             })
             .identifier(['userId', 'tmdbId'])
             .secondaryIndexes((index) => [index('userId').name('byUserAndDate').sortKeys(['savedAt'])])
-            .authorization((allow) => [allow.owner()]),
-
-        WatchStatus: a
-            .model({
-                userId: a.string().required(),
-                itemId: a.string().required(),
-                watchlistId: a.string().required(),
-                watchedAt: a.datetime(),
-            })
-            .identifier(['userId', 'itemId'])
-            .secondaryIndexes((index) => [index('userId').sortKeys(['watchlistId']).name('byUserAndList')])
             .authorization((allow) => [allow.owner()]),
 
         Genre: a.customType({
@@ -258,6 +258,23 @@ const schema = a
             .returns(a.ref('AddWatchlistItemResult'))
             .authorization((allow) => [allow.authenticated()])
             .handler(a.handler.function(watchlistItem)),
+
+        ToggleWatchedResult: a.customType({
+            success: a.boolean().required(),
+            error: a.enum(['NOT_FOUND', 'NOT_ALLOWED', 'CONFLICT']),
+        }),
+        // allow.authenticated() is a coarse gate; the handler reads the item server-side
+        // and checks the caller against its editors/viewers arrays.
+        toggleWatched: a
+            .mutation()
+            .arguments({
+                watchlistId: a.string().required(),
+                tmdbId: a.string().required(),
+                watched: a.boolean().required(),
+            })
+            .returns(a.ref('ToggleWatchedResult'))
+            .authorization((allow) => [allow.authenticated()])
+            .handler(a.handler.function(toggleWatched)),
 
         // The membership mutations share one Lambda. allow.authenticated() is a coarse
         // gate; the owner/self checks happen inside the handler.

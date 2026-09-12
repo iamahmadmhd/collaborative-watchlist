@@ -12,3 +12,14 @@ export type WatchlistRole = NonNullable<WatchlistMemberRecord['role']>;
 export function canEditWatchlist(role: WatchlistRole | null | undefined): boolean {
     return role === 'OWNER' || role === 'EDITOR';
 }
+
+// watchedBy is typed `(string | null)[] | null` by the generated schema — an Amplify
+// array field has no default, so an item nobody has marked carries no attribute at all.
+// Every reader goes through these two so that coalescing happens in one place.
+export function watchedByIds(item: Pick<WatchlistItemRecord, 'watchedBy'>): string[] {
+    return (item.watchedBy ?? []).filter((id): id is string => id !== null);
+}
+
+export function isWatchedBy(item: Pick<WatchlistItemRecord, 'watchedBy'>, userId: string | undefined): boolean {
+    return userId !== undefined && watchedByIds(item).includes(userId);
+}

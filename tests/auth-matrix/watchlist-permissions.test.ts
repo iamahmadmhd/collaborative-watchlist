@@ -5,7 +5,16 @@ import { describe, it } from 'vitest';
 // "button is hidden" test proves nothing about the security property.
 
 type Actor = 'Owner' | 'Editor' | 'Viewer' | 'Non-member' | 'Removed member';
-type Operation = 'read items' | 'add item' | 'remove item' | 'rename list' | 'change membership' | 'delete list';
+type Operation =
+    | 'read items'
+    | 'add item'
+    | 'remove item'
+    | 'rename list'
+    | 'change membership'
+    | 'delete list'
+    // Two assertions, not one: that toggleWatched succeeds for the caller's own mark,
+    // and that updateWatchlistItem cannot reach watchedBy at all.
+    | 'toggle watched';
 
 const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
     Owner: {
@@ -15,6 +24,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'allow',
         'change membership': 'allow',
         'delete list': 'allow',
+        'toggle watched': 'allow',
     },
     Editor: {
         'read items': 'allow',
@@ -23,6 +33,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'allow',
         'change membership': 'deny',
         'delete list': 'deny',
+        'toggle watched': 'allow',
     },
     Viewer: {
         'read items': 'allow',
@@ -31,6 +42,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'deny',
         'change membership': 'deny',
         'delete list': 'deny',
+        'toggle watched': 'allow',
     },
     'Non-member': {
         'read items': 'deny',
@@ -39,6 +51,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'deny',
         'change membership': 'deny',
         'delete list': 'deny',
+        'toggle watched': 'deny',
     },
     'Removed member': {
         'read items': 'deny',
@@ -47,6 +60,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'deny',
         'change membership': 'deny',
         'delete list': 'deny',
+        'toggle watched': 'deny',
     },
 };
 

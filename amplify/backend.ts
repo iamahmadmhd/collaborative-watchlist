@@ -18,6 +18,7 @@ import { membership } from './functions/membership/resource';
 import { permissionFanout } from './functions/permission-fanout/resource';
 import { deleteAccount } from './functions/delete-account/resource';
 import { watchlistItem } from './functions/watchlist-item/resource';
+import { toggleWatched } from './functions/toggle-watched/resource';
 
 const backend = defineBackend({
     auth,
@@ -30,6 +31,7 @@ const backend = defineBackend({
     permissionFanout,
     deleteAccount,
     watchlistItem,
+    toggleWatched,
 });
 
 // Plain CDK, not an Amplify Data model: TmdbCache must not appear in the GraphQL
@@ -138,11 +140,11 @@ usernameTable.grant(membershipLambda, 'dynamodb:GetItem');
 (membershipLambda as lambda.Function).addEnvironment('WATCHLIST_MEMBER_TABLE_NAME', watchlistMemberTable.tableName);
 (membershipLambda as lambda.Function).addEnvironment('USERNAME_TABLE_NAME', usernameTable.tableName);
 
-// delete-account writes seven tables directly: both cascade-deleting an owned watchlist
+// delete-account writes six tables directly: both cascade-deleting an owned watchlist
 // and leaving someone else's require writing Watchlist.editors/viewers, which has no
-// GraphQL write path for anyone.
+// GraphQL write path for anyone. It also strips the caller from
+// WatchlistItem.watchedBy on lists it merely leaves.
 const savedMovieTable = backend.data.resources.tables.SavedMovie;
-const watchStatusTable = backend.data.resources.tables.WatchStatus;
 const userProfileTable = backend.data.resources.tables.UserProfile;
 const deleteAccountLambda = backend.deleteAccount.resources.lambda;
 
@@ -160,9 +162,15 @@ watchlistMemberTable.grant(
     'dynamodb:BatchWriteItem',
     'dynamodb:TransactWriteItems',
 );
-watchlistItemTable.grant(deleteAccountLambda, 'dynamodb:Query', 'dynamodb:BatchWriteItem');
+watchlistItemTable.grant(
+    deleteAccountLambda,
+    'dynamodb:Query',
+    'dynamodb:BatchWriteItem',
+    // Stripping one element out of watchedBy is an UpdateItem, not a rewrite of the row:
+    // a Put would clobber a concurrent mark by another member.
+    'dynamodb:UpdateItem',
+);
 savedMovieTable.grant(deleteAccountLambda, 'dynamodb:Query', 'dynamodb:BatchWriteItem');
-watchStatusTable.grant(deleteAccountLambda, 'dynamodb:Query', 'dynamodb:BatchWriteItem');
 userProfileTable.grant(deleteAccountLambda, 'dynamodb:GetItem', 'dynamodb:DeleteItem');
 usernameTable.grant(deleteAccountLambda, 'dynamodb:DeleteItem');
 
@@ -172,11 +180,7 @@ usernameTable.grant(deleteAccountLambda, 'dynamodb:DeleteItem');
 deleteAccountLambda.addToRolePolicy(
     new iam.PolicyStatement({
         actions: ['dynamodb:Query'],
-        resources: [
-            `${watchlistMemberTable.tableArn}/index/*`,
-            `${savedMovieTable.tableArn}/index/*`,
-            `${watchStatusTable.tableArn}/index/*`,
-        ],
+        resources: [`${watchlistMemberTable.tableArn}/index/*`, `${savedMovieTable.tableArn}/index/*`],
     }),
 );
 
@@ -184,7 +188,6 @@ deleteAccountLambda.addToRolePolicy(
 (deleteAccountLambda as lambda.Function).addEnvironment('WATCHLIST_MEMBER_TABLE_NAME', watchlistMemberTable.tableName);
 (deleteAccountLambda as lambda.Function).addEnvironment('WATCHLIST_ITEM_TABLE_NAME', watchlistItemTable.tableName);
 (deleteAccountLambda as lambda.Function).addEnvironment('SAVED_MOVIE_TABLE_NAME', savedMovieTable.tableName);
-(deleteAccountLambda as lambda.Function).addEnvironment('WATCH_STATUS_TABLE_NAME', watchStatusTable.tableName);
 (deleteAccountLambda as lambda.Function).addEnvironment('USER_PROFILE_TABLE_NAME', userProfileTable.tableName);
 (deleteAccountLambda as lambda.Function).addEnvironment('USERNAME_TABLE_NAME', usernameTable.tableName);
 
@@ -194,6 +197,15 @@ deleteAccountLambda.addToRolePolicy(
 const watchlistItemLambda = backend.watchlistItem.resources.lambda;
 watchlistTable.grant(watchlistItemLambda, 'dynamodb:GetItem');
 (watchlistItemLambda as lambda.Function).addEnvironment('WATCHLIST_TABLE_NAME', watchlistTable.tableName);
+
+// toggle-watched reads the WatchlistItem to authorize the caller against its own
+// editors/viewers, then updates watchedBy in place. Both stay on direct DynamoDB:
+// watchedBy denies `update` to every GraphQL principal and allow.resource() has no
+// field-level form that could exempt this function — the same wall claim-username hits
+// below. See System Design §4.4.
+const toggleWatchedLambda = backend.toggleWatched.resources.lambda;
+watchlistItemTable.grant(toggleWatchedLambda, 'dynamodb:GetItem', 'dynamodb:UpdateItem');
+(toggleWatchedLambda as lambda.Function).addEnvironment('WATCHLIST_ITEM_TABLE_NAME', watchlistItemTable.tableName);
 
 // claim-username writes UserProfile.username directly because that field's own
 // authorization rule denies every GraphQL writer and allow.resource() has no

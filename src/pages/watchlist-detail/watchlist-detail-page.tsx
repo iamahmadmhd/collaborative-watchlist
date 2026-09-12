@@ -4,17 +4,18 @@ import { useWatchlist } from '../../entities/watchlist/api/use-watchlist';
 import { useWatchlistRole } from '../../entities/watchlist/api/use-watchlist-role';
 import { useWatchlistMembers } from '../../entities/watchlist/api/use-watchlist-members';
 import { useWatchlistItems } from '../../entities/watchlist/api/watchlist-items';
-import { canEditWatchlist } from '../../entities/watchlist/model/watchlist';
+import { canEditWatchlist, isWatchedBy, watchedByIds } from '../../entities/watchlist/model/watchlist';
 import type { WatchlistItemRecord, WatchlistRecord } from '../../entities/watchlist/model/watchlist';
 import { RoleBadge } from '../../entities/watchlist/ui/role-badge';
 import { memberColor } from '../../entities/member/model/member-color';
+import { useCurrentUser } from '../../entities/member/api/use-current-user';
 import { posterUrl } from '../../entities/movie/model/movie';
 import { HATCH_STYLE } from '../../entities/movie/ui/movie-card';
 import { formatRelativeTime } from '../../shared/lib/format-relative-time';
 import { useRemoveListItem } from '../../features/manage-list-items/api/manage-list-items';
 import { ManageMembersSection } from '../../features/manage-members/ui/manage-members-section';
-import { useWatchedSet } from '../../features/toggle-watched/api/watch-status';
 import { WatchedToggleButton } from '../../features/toggle-watched/ui/watched-toggle-button';
+import { WatchedByLine } from '../../features/toggle-watched/ui/watched-by-line';
 import { BackHeader, MobileBackHeader } from '../../shared/ui/back-header';
 import { QueryState } from '../../shared/ui/query-state';
 
@@ -26,7 +27,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
     const roleQuery = useWatchlistRole(watchlistId);
     const membersQuery = useWatchlistMembers(watchlistId);
     const itemsQuery = useWatchlistItems(watchlistId);
-    const watchedQuery = useWatchedSet(watchlistId);
+    const currentUser = useCurrentUser();
 
     function handleBack() {
         window.history.back();
@@ -55,6 +56,10 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
 
     const watchlist = watchlistQuery.data;
     const canEdit = canEditWatchlist(roleQuery.data);
+    const currentUserId = currentUser.data?.id;
+    // Both counts come off the same array, so they cannot disagree.
+    const items = itemsQuery.data;
+    const watchedCount = items?.filter((item) => isWatchedBy(item, currentUserId)).length;
     const memberLabels = new Map((membersQuery.data ?? []).map((m) => [m.userId, m.displayName ?? m.username ?? '?']));
 
     return (
@@ -66,8 +71,8 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                     <ListHeading
                         watchlist={watchlist}
                         role={roleQuery.data}
-                        itemCount={itemsQuery.data?.length}
-                        watchedCount={watchedQuery.data?.size}
+                        itemCount={items?.length}
+                        watchedCount={watchedCount}
                     />
                     <ManageMembersSection
                         watchlistId={watchlistId}
@@ -79,7 +84,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                         itemsQuery={itemsQuery}
                         canEdit={canEdit}
                         memberLabels={memberLabels}
-                        watchedSet={watchedQuery.data}
+                        currentUserId={currentUserId}
                         watchlistId={watchlistId}
                         className='mt-6'
                     />
@@ -93,8 +98,8 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                     <ListHeading
                         watchlist={watchlist}
                         role={roleQuery.data}
-                        itemCount={itemsQuery.data?.length}
-                        watchedCount={watchedQuery.data?.size}
+                        itemCount={items?.length}
+                        watchedCount={watchedCount}
                     />
                     <ManageMembersSection
                         watchlistId={watchlistId}
@@ -106,7 +111,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                         itemsQuery={itemsQuery}
                         canEdit={canEdit}
                         memberLabels={memberLabels}
-                        watchedSet={watchedQuery.data}
+                        currentUserId={currentUserId}
                         watchlistId={watchlistId}
                         className='mt-4'
                     />
@@ -142,7 +147,7 @@ function ListHeading({
             {watchlist.description && <p className='text-muted font-body max-w-160 text-sm'>{watchlist.description}</p>}
             <span className='text-muted font-mono text-[11px]'>
                 {count} item{count === 1 ? '' : 's'}
-                {/* undefined rather than 0 while useWatchedSet loads, so this does not
+                {/* undefined rather than 0 until the items resolve, so this does not
                     flash "0 watched" on every open. */}
                 {watchedCount !== undefined && itemCount !== undefined && (
                     <>
@@ -159,14 +164,14 @@ function ItemsSection({
     itemsQuery,
     canEdit,
     memberLabels,
-    watchedSet,
+    currentUserId,
     watchlistId,
     className,
 }: {
     itemsQuery: ReturnType<typeof useWatchlistItems>;
     canEdit: boolean;
     memberLabels: Map<string, string>;
-    watchedSet: Set<string> | undefined;
+    currentUserId: string | undefined;
     watchlistId: string;
     className?: string;
 }) {
@@ -209,7 +214,8 @@ function ItemsSection({
                             item={item}
                             canEdit={canEdit}
                             addedByLabel={memberLabels.get(item.addedBy) ?? 'A member'}
-                            isWatched={watchedSet?.has(item.tmdbId) ?? false}
+                            memberLabels={memberLabels}
+                            currentUserId={currentUserId}
                             watchlistId={watchlistId}
                         />
                     ))}
@@ -223,17 +229,21 @@ function ItemRow({
     item,
     canEdit,
     addedByLabel,
-    isWatched,
+    memberLabels,
+    currentUserId,
     watchlistId,
 }: {
     item: WatchlistItemRecord;
     canEdit: boolean;
     addedByLabel: string;
-    isWatched: boolean;
+    memberLabels: Map<string, string>;
+    currentUserId: string | undefined;
     watchlistId: string;
 }) {
     const removeItem = useRemoveListItem(watchlistId);
     const poster = posterUrl(item.posterPath, 'w185');
+    const watchedBy = watchedByIds(item);
+    const isWatched = isWatchedBy(item, currentUserId);
 
     return (
         <div className='border-border bg-raised flex items-center gap-3.5 overflow-hidden rounded-sm border'>
@@ -259,6 +269,7 @@ function ItemRow({
                     Added by {addedByLabel}
                     {item.addedAt && <> · {formatRelativeTime(item.addedAt)}</>}
                 </span>
+                <WatchedByLine watchedBy={watchedBy} memberLabels={memberLabels} currentUserId={currentUserId} />
             </div>
             <WatchedToggleButton
                 watchlistId={watchlistId}

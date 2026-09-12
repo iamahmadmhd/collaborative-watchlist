@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { client } from '../../../shared/lib/amplify-client';
 import type { PaginatedMovies } from '../model/movie';
 
@@ -16,5 +16,6 @@ export function useDiscoverMovies({ genreId, page }: { genreId?: number | undefi
             }
             return data;
         },
+        placeholderData: keepPreviousData,
     });
 }

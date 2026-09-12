@@ -81,7 +81,7 @@ function SectionHeading({ children }: { children: string }) {
 
 function AppearanceSection({ variant }: { variant: 'cards' | 'segment' }) {
     return (
-        <section id='appearance' className='flex flex-col gap-3'>
+        <section className='flex flex-col gap-3'>
             <SectionHeading>Appearance</SectionHeading>
             <div className='flex flex-col gap-0.5'>
                 <span className='text-text text-[15px] font-semibold'>Theme</span>
@@ -99,10 +99,7 @@ function IdentitySection() {
     const user = currentUserQuery.data;
 
     return (
-        <section
-            id='identity'
-            className='border-border flex flex-col gap-4 border-t pt-5.5 first:border-t-0 first:pt-0'
-        >
+        <section className='border-border flex flex-col gap-4 border-t pt-5.5 first:border-t-0 first:pt-0'>
             <SectionHeading>Public identity</SectionHeading>
             {user?.username ? (
                 <div className='flex flex-col gap-1.5'>
@@ -129,7 +126,7 @@ function IdentitySection() {
 
 function AccountSection() {
     return (
-        <section id='account' className='border-border flex flex-col gap-4 border-t pt-5.5'>
+        <section className='border-border flex flex-col gap-4 border-t pt-5.5'>
             <SectionHeading>Account</SectionHeading>
             <SignOutRow />
             <DeleteAccountRow />

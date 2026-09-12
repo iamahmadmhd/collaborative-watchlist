@@ -4,6 +4,7 @@ import { watchlistItemsQueryKey } from '../../../entities/watchlist/api/watchlis
 import type { WatchlistItemRecord } from '../../../entities/watchlist/model/watchlist';
 import type { MovieSummary } from '../../../entities/movie/model/movie';
 import { rankAfter } from '../../../shared/lib/fractional-rank';
+import { listAll } from '../../../shared/lib/amplify-result';
 import { useOptimisticMutation } from '../../../shared/lib/use-optimistic-mutation';
 
 function membershipQueryKey(watchlistId: string, tmdbId: string) {
@@ -20,7 +21,12 @@ function membershipQueryKey(watchlistId: string, tmdbId: string) {
 // handler reads the Watchlist server-side and stamps them itself, so nothing about
 // them belongs on this side of the wire.
 async function loadLastPosition(watchlistId: string): Promise<string | null> {
-    const { data: items } = await client.models.WatchlistItem.list({ watchlistId });
+    // Rows come back in sort-key order, not position order, so every page has to be
+    // drained before the maximum is the real one.
+    const items = await listAll<{ position: string }>(
+        (nextToken) => client.models.WatchlistItem.list({ watchlistId, nextToken }),
+        'Could not add this film to the list.',
+    );
     return items.reduce<string | null>(
         (max, item) => (max === null || item.position > max ? item.position : max),
         null,

@@ -39,6 +39,11 @@ export function ClaimUsernameForm({ submitLabel, onSuccess }: { submitLabel: str
             if (!result.success) {
                 if (result.error === 'ALREADY_TAKEN') {
                     setError('username', { message: 'That username is already taken.' });
+                } else if (result.error === 'DISPLAY_NAME_FAILED') {
+                    setError('root', {
+                        message:
+                            'Your username is saved, but we could not save your display name. Try again, or set it later in Settings.',
+                    });
                 } else {
                     setError('root', { message: 'Could not claim that username. Please try again.' });
                 }

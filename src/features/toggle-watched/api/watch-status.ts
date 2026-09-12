@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
+import { listAll, throwOnErrors } from '../../../shared/lib/amplify-result';
 import { useOptimisticMutation } from '../../../shared/lib/use-optimistic-mutation';
 
 // WatchStatus is keyed (userId, itemId), so a bare tmdbId cannot be the itemId: the
@@ -22,12 +23,16 @@ export function useWatchedSet(watchlistId: string) {
         queryKey: watchStatusQueryKey(watchlistId),
         queryFn: async (): Promise<Set<string>> => {
             const { userId } = await getCurrentUser();
-            const { data } = await client.models.WatchStatus.listWatchStatusByUserIdAndWatchlistId({
-                userId,
-                watchlistId: { eq: watchlistId },
-            });
+            const statuses = await listAll<{ itemId: string }>(
+                (nextToken) =>
+                    client.models.WatchStatus.listWatchStatusByUserIdAndWatchlistId(
+                        { userId, watchlistId: { eq: watchlistId } },
+                        { nextToken },
+                    ),
+                'Could not load watched films.',
+            );
             const prefix = `${watchlistId}#`;
-            return new Set(data.map((status) => status.itemId.slice(prefix.length)));
+            return new Set(statuses.map((status) => status.itemId.slice(prefix.length)));
         },
     });
 }
@@ -42,15 +47,17 @@ export function useToggleWatched(watchlistId: string) {
             const { userId } = await getCurrentUser();
             const itemId = watchedItemId(watchlistId, tmdbId);
             if (isWatched) {
-                await client.models.WatchStatus.delete({ userId, itemId });
-            } else {
-                await client.models.WatchStatus.create({
-                    userId,
-                    itemId,
-                    watchlistId,
-                    watchedAt: new Date().toISOString(),
-                });
+                const { errors } = await client.models.WatchStatus.delete({ userId, itemId });
+                throwOnErrors(errors, 'Could not mark this film unwatched.');
+                return;
             }
+            const { errors } = await client.models.WatchStatus.create({
+                userId,
+                itemId,
+                watchlistId,
+                watchedAt: new Date().toISOString(),
+            });
+            throwOnErrors(errors, 'Could not mark this film watched.');
         },
         optimisticUpdate: (previous, { tmdbId, isWatched }) => {
             const next = new Set(previous);

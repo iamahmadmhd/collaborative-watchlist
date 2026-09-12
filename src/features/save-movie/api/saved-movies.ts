@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
+import { listAll, throwOnErrors } from '../../../shared/lib/amplify-result';
 import { useOptimisticMutation } from '../../../shared/lib/use-optimistic-mutation';
 import type { MovieSummary } from '../../../entities/movie/model/movie';
 import type { Schema } from '../../../../amplify/data/resource';
@@ -16,8 +17,11 @@ export function useSavedSet() {
     return useQuery({
         queryKey: SAVED_MOVIES_KEY,
         queryFn: async (): Promise<Set<string>> => {
-            const { data } = await client.models.SavedMovie.list();
-            return new Set(data.map((saved) => saved.tmdbId));
+            const saved = await listAll<SavedMovieRecord>(
+                (nextToken) => client.models.SavedMovie.list({ nextToken }),
+                'Could not load saved films.',
+            );
+            return new Set(saved.map((movie) => movie.tmdbId));
         },
     });
 }
@@ -30,11 +34,14 @@ export function useSavedMovies() {
         queryKey: [...SAVED_MOVIES_KEY, 'list'],
         queryFn: async (): Promise<SavedMovieRecord[]> => {
             const { userId } = await getCurrentUser();
-            const { data } = await client.models.SavedMovie.listSavedMovieByUserIdAndSavedAt(
-                { userId },
-                { sortDirection: 'DESC' },
+            return listAll<SavedMovieRecord>(
+                (nextToken) =>
+                    client.models.SavedMovie.listSavedMovieByUserIdAndSavedAt(
+                        { userId },
+                        { sortDirection: 'DESC', nextToken },
+                    ),
+                'Could not load saved films.',
             );
-            return data;
         },
     });
 }
@@ -47,17 +54,19 @@ export function useToggleSave() {
         mutationFn: async ({ movie, isSaved }) => {
             const { userId } = await getCurrentUser();
             if (isSaved) {
-                await client.models.SavedMovie.delete({ userId, tmdbId: movie.tmdbId });
-            } else {
-                await client.models.SavedMovie.create({
-                    userId,
-                    tmdbId: movie.tmdbId,
-                    title: movie.title,
-                    posterPath: movie.posterPath ?? null,
-                    releaseYear: movie.releaseYear ?? null,
-                    savedAt: new Date().toISOString(),
-                });
+                const { errors } = await client.models.SavedMovie.delete({ userId, tmdbId: movie.tmdbId });
+                throwOnErrors(errors, 'Could not unsave this film.');
+                return;
             }
+            const { errors } = await client.models.SavedMovie.create({
+                userId,
+                tmdbId: movie.tmdbId,
+                title: movie.title,
+                posterPath: movie.posterPath ?? null,
+                releaseYear: movie.releaseYear ?? null,
+                savedAt: new Date().toISOString(),
+            });
+            throwOnErrors(errors, 'Could not save this film.');
         },
         optimisticUpdate: (previous, { movie, isSaved }) => {
             const next = new Set(previous);

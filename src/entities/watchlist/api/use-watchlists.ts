@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
-import type { WatchlistRecord, WatchlistRole } from '../model/watchlist';
+import { listAll, throwOnErrors } from '../../../shared/lib/amplify-result';
+import type { WatchlistMemberRecord, WatchlistRecord, WatchlistRole } from '../model/watchlist';
 
 export const WATCHLISTS_QUERY_KEY = ['watchlists'];
 
@@ -23,7 +24,10 @@ export function useWatchlists() {
         queryKey: WATCHLISTS_QUERY_KEY,
         queryFn: async (): Promise<MyWatchlist[]> => {
             const { userId } = await getCurrentUser();
-            const { data: memberships } = await client.models.WatchlistMember.listWatchlistMemberByUserId({ userId });
+            const memberships = await listAll<WatchlistMemberRecord | null>(
+                (nextToken) => client.models.WatchlistMember.listWatchlistMemberByUserId({ userId }, { nextToken }),
+                'Could not load watchlists.',
+            );
 
             const watchlists = await Promise.all(
                 // A membership entry can be null: GraphQL null-propagation nulls a list
@@ -33,7 +37,10 @@ export function useWatchlists() {
                     if (!membership || !membership.role) {
                         return null;
                     }
-                    const { data: watchlist } = await client.models.Watchlist.get({ id: membership.watchlistId });
+                    const { data: watchlist, errors } = await client.models.Watchlist.get({
+                        id: membership.watchlistId,
+                    });
+                    throwOnErrors(errors, 'Could not load watchlists.');
                     return watchlist ? toMyWatchlist(watchlist, membership.role) : null;
                 }),
             );

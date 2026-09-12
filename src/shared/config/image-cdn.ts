@@ -12,4 +12,4 @@ const custom = (outputs as { custom?: Record<string, unknown> }).custom;
 // posterUrl() then treats it like a missing posterPath and falls back to the
 // placeholder, instead of breaking every poster on the page.
 export const imageCdnDomain: string | undefined =
-    typeof custom?.imageCdnDomain === 'string' ? custom.imageCdnDomain : undefined;
+    typeof custom?.imageCdnDomain === 'string' && custom.imageCdnDomain.length > 0 ? custom.imageCdnDomain : undefined;

@@ -30,7 +30,8 @@ export function useUsernameAvailability(candidate: string | undefined, validForm
     return validFormat && availability?.value === candidate ? availability : null;
 }
 
-export type ClaimUsernameError = 'INVALID_FORMAT' | 'ALREADY_CLAIMED' | 'ALREADY_TAKEN' | 'UNKNOWN';
+export type ClaimUsernameError =
+    'INVALID_FORMAT' | 'ALREADY_CLAIMED' | 'ALREADY_TAKEN' | 'DISPLAY_NAME_FAILED' | 'UNKNOWN';
 export type ClaimUsernameOutcome = { success: true } | { success: false; error: ClaimUsernameError };
 
 // A display name set on the same screen is written straight after a successful claim.
@@ -50,12 +51,27 @@ export async function claimUsername({
     if (errors?.length || !data) {
         return { success: false, error: 'UNKNOWN' };
     }
-    if (!data.success) {
+    // ALREADY_CLAIMED means the claim landed — on a retry after the display-name write
+    // below failed, or in another tab. Reporting it as a failure would leave a member
+    // who already has a username with no way past this form.
+    if (!data.success && data.error !== 'ALREADY_CLAIMED') {
         return { success: false, error: data.error ?? 'UNKNOWN' };
     }
+    // Past this point the username is durably claimed, so a failure here is reported as
+    // its own outcome rather than as a failed claim. Resubmitting retries just this write.
     if (displayName) {
-        const { userId } = await getCurrentUser();
-        await client.models.UserProfile.update({ id: userId, displayName });
+        try {
+            const { userId } = await getCurrentUser();
+            const { data: profile, errors: updateErrors } = await client.models.UserProfile.update({
+                id: userId,
+                displayName,
+            });
+            if (updateErrors?.length || !profile) {
+                return { success: false, error: 'DISPLAY_NAME_FAILED' };
+            }
+        } catch {
+            return { success: false, error: 'DISPLAY_NAME_FAILED' };
+        }
     }
     return { success: true };
 }

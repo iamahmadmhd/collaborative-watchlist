@@ -8,6 +8,7 @@ import { OtpField } from '../../shared/ui/otp-field';
 import { Button } from '../../shared/ui/button';
 import { AuthPageShell } from './auth-page-shell';
 import { authErrorMessage } from '../../shared/lib/auth-error-message';
+import { safeRedirect } from '../../shared/lib/safe-redirect';
 
 // One screen, two entry points: sign-up and sign-in confirmation are different Cognito
 // calls with the same UX, so `mode` picks between them. They do not share a code
@@ -95,7 +96,7 @@ export function VerifyPage({
                 return;
             }
             await confirmSignIn({ challengeResponse: code });
-            await navigate({ to: redirect ?? '/' });
+            await navigate({ to: safeRedirect(redirect) });
         } catch (err) {
             setFailedAttempts((n) => n + 1);
             setError('root', { message: authErrorMessage(err) });

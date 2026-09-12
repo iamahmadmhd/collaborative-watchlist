@@ -1,5 +1,6 @@
 import { useNavigate } from '@tanstack/react-router';
 import { ClaimUsernameForm } from '../../features/claim-username/ui/claim-username-form';
+import { safeRedirect } from '../../shared/lib/safe-redirect';
 import { AuthPageShell } from './auth-page-shell';
 
 // Reached only once verification succeeds for a new member, so a session already
@@ -23,7 +24,7 @@ export function UsernamePage({ redirect }: { redirect?: string | undefined }) {
             </div>
             <ClaimUsernameForm
                 submitLabel='Finish setting up'
-                onSuccess={() => void navigate({ to: redirect ?? '/' })}
+                onSuccess={() => void navigate({ to: safeRedirect(redirect) })}
             />
             <p className='font-body text-muted text-xs leading-relaxed'>
                 Your username and display name are visible to anyone you share a list with.

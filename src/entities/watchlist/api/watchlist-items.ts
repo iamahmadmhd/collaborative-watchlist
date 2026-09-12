@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { client } from '../../../shared/lib/amplify-client';
+import { listAll } from '../../../shared/lib/amplify-result';
 import type { WatchlistItemRecord } from '../model/watchlist';
 
 export function watchlistItemsQueryKey(watchlistId: string) {
@@ -37,8 +38,11 @@ export function useWatchlistItems(watchlistId: string) {
     const query = useQuery({
         queryKey: watchlistItemsQueryKey(watchlistId),
         queryFn: async (): Promise<WatchlistItemRecord[]> => {
-            const { data } = await client.models.WatchlistItem.list({ watchlistId });
-            return sortByPosition(data);
+            const items = await listAll<WatchlistItemRecord>(
+                (nextToken) => client.models.WatchlistItem.list({ watchlistId, nextToken }),
+                "Could not load this list's films.",
+            );
+            return sortByPosition(items);
         },
     });
 

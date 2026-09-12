@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { client } from '../../../shared/lib/amplify-client';
-import type { WatchlistRole } from '../model/watchlist';
+import { listAll, throwOnErrors } from '../../../shared/lib/amplify-result';
+import type { WatchlistMemberRecord, WatchlistRole } from '../model/watchlist';
 
 export interface WatchlistMemberWithProfile {
     userId: string;
@@ -20,14 +21,18 @@ export function useWatchlistMembers(watchlistId: string) {
     return useQuery({
         queryKey: watchlistMembersQueryKey(watchlistId),
         queryFn: async (): Promise<WatchlistMemberWithProfile[]> => {
-            const { data: members } = await client.models.WatchlistMember.list({ watchlistId });
+            const members = await listAll<WatchlistMemberRecord>(
+                (nextToken) => client.models.WatchlistMember.list({ watchlistId, nextToken }),
+                'Could not load this list’s members.',
+            );
 
             const withProfiles = await Promise.all(
                 members.map(async (member): Promise<WatchlistMemberWithProfile | null> => {
                     if (!member.role) {
                         return null;
                     }
-                    const { data: profile } = await client.models.UserProfile.get({ id: member.userId });
+                    const { data: profile, errors } = await client.models.UserProfile.get({ id: member.userId });
+                    throwOnErrors(errors, 'Could not load this list’s members.');
                     return {
                         userId: member.userId,
                         role: member.role,

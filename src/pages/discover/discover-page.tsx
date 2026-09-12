@@ -81,7 +81,7 @@ export function DiscoverPage({
                                 infoPosition='start'
                                 info={
                                     <span>
-                                        page {moviesQuery.data.page} / {Math.max(moviesQuery.data.totalPages, 1)}
+                                        page {page} / {Math.max(moviesQuery.data.totalPages, 1)}
                                     </span>
                                 }
                             />
@@ -129,7 +129,7 @@ export function DiscoverPage({
                             infoPosition='start'
                             info={
                                 <span>
-                                    page {moviesQuery.data.page} / {Math.max(moviesQuery.data.totalPages, 1)}
+                                    page {page} / {Math.max(moviesQuery.data.totalPages, 1)}
                                 </span>
                             }
                             className='justify-center py-10'

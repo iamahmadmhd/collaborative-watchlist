@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { useThemePreference, type ThemePreference } from '../lib/theme';
 
 // Two visual treatments of the same three-way control: `cards` for desktop Settings and
@@ -17,8 +18,41 @@ const OPTIONS: { value: ThemePreference; label: string; previewBg: string; bars:
     },
 ];
 
+// A radiogroup is one tab stop whose options move under the arrow keys, with selection
+// following focus. Buttons carry no such behaviour on their own, so the roving tabIndex
+// and the key handler below supply it.
+function useRovingRadioGroup(setPreference: (preference: ThemePreference) => void) {
+    const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+    function onKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
+        const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : 0;
+        const back = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+        const delta = step || back;
+        if (delta === 0) {
+            return;
+        }
+        event.preventDefault();
+        const nextIndex = (index + delta + OPTIONS.length) % OPTIONS.length;
+        const next = OPTIONS[nextIndex];
+        if (!next) {
+            return;
+        }
+        setPreference(next.value);
+        // tabIndex moves with the selection, so focus has to follow it explicitly.
+        buttonRefs.current[nextIndex]?.focus();
+    }
+
+    return {
+        onKeyDown,
+        register: (index: number) => (element: HTMLButtonElement | null) => {
+            buttonRefs.current[index] = element;
+        },
+    };
+}
+
 export function ThemeToggle({ variant, className }: { variant: 'cards' | 'segment'; className?: string }) {
     const [preference, setPreference] = useThemePreference();
+    const roving = useRovingRadioGroup(setPreference);
 
     if (variant === 'segment') {
         return (
@@ -27,14 +61,17 @@ export function ThemeToggle({ variant, className }: { variant: 'cards' | 'segmen
                 aria-label='Theme'
                 className={`border-border flex overflow-hidden rounded-[3px] border ${className ?? ''}`}
             >
-                {OPTIONS.map((option) => {
+                {OPTIONS.map((option, index) => {
                     const active = option.value === preference;
                     return (
                         <button
                             key={option.value}
+                            ref={roving.register(index)}
                             type='button'
                             role='radio'
                             aria-checked={active}
+                            tabIndex={active ? 0 : -1}
+                            onKeyDown={(event) => roving.onKeyDown(event, index)}
                             onClick={() => setPreference(option.value)}
                             className={
                                 (active
@@ -53,14 +90,17 @@ export function ThemeToggle({ variant, className }: { variant: 'cards' | 'segmen
 
     return (
         <div role='radiogroup' aria-label='Theme' className={`grid grid-cols-3 gap-3 ${className ?? ''}`}>
-            {OPTIONS.map((option) => {
+            {OPTIONS.map((option, index) => {
                 const active = option.value === preference;
                 return (
                     <button
                         key={option.value}
+                        ref={roving.register(index)}
                         type='button'
                         role='radio'
                         aria-checked={active}
+                        tabIndex={active ? 0 : -1}
+                        onKeyDown={(event) => roving.onKeyDown(event, index)}
                         onClick={() => setPreference(option.value)}
                         className={`bg-raised focus-visible:outline-accent overflow-hidden rounded-sm border text-left focus-visible:outline-2 focus-visible:outline-offset-2 ${active ? 'border-accent' : 'border-border'}`}
                     >

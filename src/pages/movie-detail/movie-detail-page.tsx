@@ -8,22 +8,6 @@ import { formatIsoDate } from '../../shared/lib/format-date';
 import { BackHeader, MobileBackHeader } from '../../shared/ui/back-header';
 import { QueryState } from '../../shared/ui/query-state';
 
-// docs/design/Movie Detail.dc.html. Two things the mock shows that this page
-// deliberately doesn't reproduce, neither backed by data this app actually has:
-// - "IN 2 OF YOUR LISTS": would need a per-list membership count summarised
-//   across every list this member belongs to, which isn't a documented access
-//   pattern (System Design §5.2) — AddToListMenu's own checkboxes already show
-//   this per-list on demand, which is what FR-ITEM-1 actually asks for.
-// - The meta line's country/language/rating (HONG KONG · CANTONESE · 7.9/10):
-//   `MovieDetail` (amplify/data/resource.ts) carries none of these — TMDB's
-//   raw response isn't proxied through, tmdb-schemas.ts only maps the fields
-//   FR-DISC-4 actually lists.
-// - The "CREDITS" grid (DIRECTOR/CINEMATOGRAPHY/EDITING/RELEASED): TMDB's
-//   response is fetched with `append_to_response=credits` (tmdb-client.ts),
-//   but only `credits.cast` is mapped — "FR-DISC-4 asks for 'cast', not the
-//   full crew list" per that file's own comment. RELEASED alone isn't worth a
-//   single-item grid section, so the release date is folded into the meta
-//   line instead.
 export function MovieDetailPage({ movieId }: { movieId: string }) {
     const movieQuery = useMovieDetail(movieId);
     const { data: savedSet } = useSavedSet();
@@ -49,10 +33,9 @@ export function MovieDetailPage({ movieId }: { movieId: string }) {
     );
 }
 
-// Mirrors discover-page.tsx's MovieGrid/search-page.tsx's SearchResultsList:
-// one component holding the pending/error/success branches, invoked once per
-// breakpoint so each gets its own appropriately-shaped skeleton/error/content
-// rather than a single non-responsive state hoisted above the layout split.
+// One component holding the pending/error/success branches, invoked once per breakpoint
+// so each gets its own appropriately shaped skeleton rather than one hoisted above the
+// layout split.
 function MovieDetailContent({
     movieQuery,
     savedSet,
@@ -71,9 +54,8 @@ function MovieDetailContent({
         >
             {(movie) => {
                 const poster = posterUrl(movie.posterPath, 'w500');
-                // `timeZone: 'UTC'` matters here: without it, `new Date('1994-07-14')`
-                // (parsed as UTC midnight) renders as the day before in any
-                // negative-UTC-offset timezone.
+                // Without timeZone: 'UTC', a date parsed as UTC midnight renders as the
+                // day before in any negative-offset timezone.
                 const releaseDate = formatIsoDate(movie.releaseDate, {
                     day: 'numeric',
                     month: 'short',

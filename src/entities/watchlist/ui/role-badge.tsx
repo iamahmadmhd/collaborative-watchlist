@@ -1,12 +1,7 @@
 import { tv } from 'tailwind-variants';
 import type { WatchlistRole } from '../model/watchlist';
 
-// docs/design Watchlists.dc.html / Watchlist Detail.dc.html's ROLE map, ported to
-// this project's own token names (docs/design/README.md's "known conflicts" note
-// — the underlying colour values match). NFR-USE-2: a member's role must be
-// visible wherever it constrains what they can do; this is that visible marker,
-// reused everywhere a WatchlistRole needs to render (the /lists row today,
-// watchlist-detail and the member list later).
+// The visible role marker, reused everywhere a WatchlistRole renders.
 const roleBadge = tv({
     base: 'inline-flex items-center rounded-[2px] border px-1.5 py-0.75 font-mono text-[9px] tracking-[0.08em] uppercase',
     variants: {

@@ -4,54 +4,16 @@ import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { batchWriteChunked, queryAllPages } from '../shared/dynamo-batch';
 
-// permission-fanout — System Design §4.5, §5.4, ADR-001
+// One function consuming two DynamoDB Streams, Watchlist and WatchlistItem (both
+// wired in backend.ts), with three jobs — see System Design §4.5 for why they share
+// a function:
 //
-// One function, two DynamoDB Streams (both wired in backend.ts): Watchlist and
-// WatchlistItem. It owns two responsibilities that both boil down to "keep
-// WatchlistItem/Watchlist consistent after a write the generated resolvers
-// couldn't make atomic or couldn't see":
+// 1. Propagating a Watchlist's editors/viewers down to every WatchlistItem under it.
+// 2. Maintaining Watchlist.itemCount from the WatchlistItem stream.
+// 3. Writing the WatchlistMember(OWNER) row for a newly created watchlist.
 //
-// 1. Permission fan-out (§4.5, ADR-001). WatchlistItem carries its own
-//    editors/viewers copy so AppSync can authorize per-item reads/subscriptions
-//    without a parent lookup. When a Watchlist's editors/viewers change (via
-//    membership/handler.ts — the only writer), every item under that watchlist
-//    needs the same new arrays. Membership changes are rare and bounded (FR-MEM-7:
-//    max 20 members), so re-querying and rewriting every item on each change is
-//    cheap relative to the read-hot path it protects.
-//
-// 2. itemCount maintenance (§5.4, FR-LIST-6). Items are created/deleted through
-//    the generated resolver, which has no hook to touch the parent Watchlist —
-//    this stream is that hook. An atomic ADD keeps it accurate without a
-//    read-modify-write race; MODIFY events (reorder, watched-toggle) don't touch
-//    count and are ignored.
-//
-// 3. Owner membership creation (§5.1, FR-LIST-1/5). WatchlistItem CRUD aside,
-//    §4.1 states list CRUD runs on Amplify's generated resolver — so a plain
-//    Watchlist.create() is the entire creation path — but WatchlistMember has
-//    no user-facing write grant at all (data/resource.ts): only membership/
-//    handler.ts can write it, and that function only ever handles add/remove/
-//    leave, never initial creation. Without a WatchlistMember(OWNER) row,
-//    access pattern #3 (§5.2, the byUser index this project's /lists screen
-//    reads) would never surface a member's own brand-new list back to them.
-//    This stream's INSERT handler is that missing write. A dedicated
-//    createWatchlist Lambda mirroring membership's TransactWriteItems would
-//    remove the eventual-consistency window this introduces, but at the cost
-//    of a sixth function contradicting §4.1's stated restraint — this stream
-//    is already paying for itself on every Watchlist write, so one more Put
-//    here is the smaller addition, consistent with the eventually-consistent
-//    posture NFR-SEC-4 and itemCount already accept elsewhere in this file.
-//
-// All three are driven by the same event.Records loop below, routed by which table's
-// stream produced each record (via eventSourceARN). Sharing one function is
-// deliberate (§4.5) — one DLQ, one consistency story, not two.
-//
-// Batch handling: returns `batchItemFailures` (reportBatchItemFailures is enabled
-// on both event source mappings in backend.ts) so a failure in one record doesn't
-// force Lambda to retry records in the same batch that already succeeded — that
-// matters most for fan-out's BatchWriteItem calls, which are NOT individually
-// idempotency-guarded beyond "overwrite, not delta" (§4.5's own stated property).
-// Records that exhaust retries land in the DLQ per that same requirement — a
-// silent failure here means stale permissions with nothing surfacing.
+// Records are routed by the eventSourceARN that produced them. The handler returns
+// batchItemFailures so a retry re-runs only the records that failed.
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
@@ -94,21 +56,16 @@ async function batchPutItems(items: readonly Record<string, unknown>[]): Promise
     );
 }
 
-// §4.5: compares old/new Watchlist images; if editors or viewers changed, rewrites
-// every item under that watchlist. Idempotent by construction — each item's
-// editors/viewers are unconditionally overwritten to the NEW arrays, so replaying
-// this on retry (or out of order relative to a later change, since it always
-// writes the value that was current as of THIS record) converges rather than
-// drifts. Amplify Data's array fields have no default, so a Watchlist immediately
-// after creation (before any membership change) legitimately has no editors/
-// viewers attribute at all — `?? []` treats that as empty rather than throwing.
+// Idempotent by construction: each item's arrays are unconditionally overwritten
+// rather than patched, so a replay converges instead of drifting. Amplify Data array
+// fields have no default, so a newly created Watchlist has no attribute at all.
 async function handleWatchlistRecord(record: DynamoDBRecord): Promise<void> {
     if (record.eventName === 'INSERT') {
         await createOwnerMembership(record);
         return;
     }
     if (record.eventName !== 'MODIFY') {
-        return; // REMOVE: cascading item deletion is a separate concern (FR-LIST-4), not this stream's job.
+        return; // Cascading item deletion is delete-account's job, not this stream's.
     }
     const oldImage = toRecord(record.dynamodb?.OldImage as Record<string, AttributeValue> | undefined);
     const newImage = toRecord(record.dynamodb?.NewImage as Record<string, AttributeValue> | undefined);
@@ -132,36 +89,21 @@ async function handleWatchlistRecord(record: DynamoDBRecord): Promise<void> {
         return;
     }
 
-    // WatchlistItem's own authorization (data/resource.ts) is
-    // allow.ownersDefinedIn('editors') for full CRUD — there is no separate
-    // allow.owner() rule on this model, because WatchlistItem has no field
-    // holding a single owner the way Watchlist has ownerId. The Owner's item
-    // access therefore depends entirely on being present in *this* array, even
-    // though Watchlist.editors itself (addMember, membership/handler.ts) only
-    // ever holds EDITOR-role userIds, never the Owner's. Fan-out has to inject
-    // ownerId here, on every propagation, or the Owner silently loses read/write
-    // on every item the moment any membership change fires this stream (FR-ITEM-1
-    // requires the Owner be able to add/remove items always, not just before the
-    // first collaborator joins).
+    // WatchlistItem has no owner field, so the Owner's access to an item depends
+    // entirely on appearing in this array — while Watchlist.editors itself holds
+    // only EDITOR-role members. ownerId must therefore be injected on every
+    // propagation, or the Owner loses access the moment membership first changes.
     const itemEditors = [ownerId, ...newEditors];
     await batchPutItems(items.map((item) => ({ ...item, editors: itemEditors, viewers: newViewers })));
 }
 
-// §5.1, FR-LIST-1/5 (see the file header's point 3). One Put, not a transaction:
-// the Watchlist row this reacts to is already durably written by the time the
-// stream delivers it, so there is nothing to roll back if this fails other than
-// retrying the same idempotent write. attribute_not_exists(watchlistId) — same
-// idiom membership/handler.ts uses for its own WatchlistMember.Put — makes a
-// redelivered INSERT record a no-op instead of clobbering joinedAt.
+// One Put, not a transaction: the Watchlist row is already durable by the time the
+// stream delivers it, so a failure only needs retrying. attribute_not_exists makes a
+// redelivered INSERT a no-op rather than clobbering joinedAt.
 //
-// createdAt/updatedAt are set explicitly, not left to Amplify Data's usual
-// auto-population — that only happens inside the generated resolver, which this
-// raw DynamoDB Put bypasses entirely. Amplify's generated schema marks both
-// non-null, so an item missing them isn't "created without a timestamp" from
-// AppSync's perspective — the whole item resolves to null on read (GraphQL
-// null-propagation bubbling a missing non-null field up to its nearest nullable
-// ancestor, the list entry itself), which is exactly what broke useWatchlists()
-// the first time a real Watchlist.create() exercised this path end-to-end.
+// createdAt/updatedAt are set explicitly: a raw Put bypasses the generated resolver
+// that would populate them, and the generated schema marks both non-null — a missing
+// one nulls the whole item on read.
 async function createOwnerMembership(record: DynamoDBRecord): Promise<void> {
     const newImage = toRecord(record.dynamodb?.NewImage as Record<string, AttributeValue> | undefined);
     const watchlistId = newImage?.id as string | undefined;
@@ -194,12 +136,10 @@ async function createOwnerMembership(record: DynamoDBRecord): Promise<void> {
     }
 }
 
-// §5.4: INSERT -> +1, REMOVE -> -1, MODIFY -> no-op (reorder/watched-toggle don't
-// change membership). attribute_exists(id) guards against resurrecting a deleted
-// Watchlist as a phantom {id, itemCount} row — DynamoDB's UpdateItem upserts by
-// default, and a REMOVE event can arrive after the parent watchlist itself is
-// already gone (e.g. a cascading list deletion, FR-LIST-4); a condition failure
-// there means "nothing to update," not a real error.
+// INSERT -> +1, REMOVE -> -1, MODIFY -> no-op. attribute_exists(id) stops UpdateItem
+// upserting a deleted Watchlist back as a phantom {id, itemCount} row, since a REMOVE
+// event can arrive after a cascading list deletion; a condition failure there means
+// "nothing to update", not an error.
 async function handleWatchlistItemRecord(record: DynamoDBRecord): Promise<void> {
     let watchlistId: string | undefined;
     let delta: number;

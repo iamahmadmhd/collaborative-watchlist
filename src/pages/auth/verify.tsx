@@ -8,26 +8,17 @@ import { OtpField } from '../../shared/ui/otp-field';
 import { Button } from '../../shared/ui/button';
 import { AuthPageShell } from './auth-page-shell';
 import { authErrorMessage } from '../../shared/lib/auth-error-message';
+import { safeRedirect } from '../../shared/lib/safe-redirect';
 
-// FR-AUTH-1/2, ADR-011 (v1.4). One screen, two entry points — sign-up confirmation
-// and sign-in confirmation are different Cognito operations (confirmSignUp vs
-// confirmSignIn) but the same UX, so `mode` picks the call rather than duplicating
-// this screen. The two operations don't share a code length, though: confirmSignUp's
-// code (Cognito's classic email-verification code) is 6 digits, while confirmSignIn's
-// EMAIL_OTP challenge (the passwordless sign-in flow, ADR-010) sends 8 — confirmed
-// against Cognito's actual behavior, not a UI choice, so `mode` drives `CODE_LENGTH`
-// the same way it drives which confirm* call runs below.
+// One screen, two entry points: sign-up and sign-in confirmation are different Cognito
+// calls with the same UX, so `mode` picks between them. They do not share a code
+// length — confirmSignUp's classic verification code is 6 digits, confirmSignIn's
+// EMAIL_OTP challenge sends 8 — so `mode` drives CODE_LENGTH as well.
 //
-// signup: confirmSignUp() marks the account confirmed (does NOT establish a
-// session on its own) — autoSignIn() was requested at signUp() time (sign-up.tsx)
-// specifically so this can complete in one code, matching the design board rather
-// than requiring a second sign-in immediately after. On success, a new member
-// still needs a username (ADR-011) — that's a session-authenticated step, so it
-// only happens once autoSignIn() has actually run, i.e. here, not before.
-// signin: confirmSignIn() completes the EMAIL_OTP challenge signIn() started. A
-// returning member goes straight in — they already have a username from a prior
-// signup pass through /username (or, rarely, still needs one via Settings — the
-// abandoned-flow edge case documented in System Design §9 #6, not solved here).
+// confirmSignUp() only marks the account confirmed; the session comes from the
+// autoSignIn() requested back at signUp(), which is what lets this finish in one code.
+// The username step follows, once that session exists. A returning member completing
+// confirmSignIn() goes straight in.
 const CODE_LENGTH: Record<'signup' | 'signin', number> = {
     signup: 6,
     signin: 8,
@@ -43,9 +34,8 @@ function createSchema(mode: 'signup' | 'signin') {
 type FormValues = { code: string };
 
 const RESEND_COOLDOWN_SECONDS = 30;
-// Client-side attempt counter for the "N tries left" hint only — presentational,
-// matching NFR-SEC-1 (real throttling/lockout on wrong codes is Cognito's own,
-// server-side). Resets on remount (i.e. on a fresh code request via sign-up.tsx).
+// Drives the "N tries left" hint only; the real throttling and lockout are Cognito's,
+// server-side. Resets on remount, i.e. on a fresh code request.
 const MAX_CODE_ATTEMPTS = 5;
 
 function formatCooldown(seconds: number): string {
@@ -54,7 +44,6 @@ function formatCooldown(seconds: number): string {
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-// redirect?: string | undefined — see the matching note in sign-up.tsx.
 export function VerifyPage({
     email,
     mode,
@@ -107,7 +96,7 @@ export function VerifyPage({
                 return;
             }
             await confirmSignIn({ challengeResponse: code });
-            await navigate({ to: redirect ?? '/' });
+            await navigate({ to: safeRedirect(redirect) });
         } catch (err) {
             setFailedAttempts((n) => n + 1);
             setError('root', { message: authErrorMessage(err) });
@@ -120,8 +109,8 @@ export function VerifyPage({
             if (mode === 'signup') {
                 await resendSignUpCode({ username: email });
             } else {
-                // EMAIL_OTP has no dedicated "resend" API — re-initiating the same
-                // sign-in challenge is what issues a fresh code.
+                // EMAIL_OTP has no resend API: re-initiating the challenge issues a
+                // fresh code.
                 await signIn({
                     username: email,
                     options: { authFlowType: 'USER_AUTH', preferredChallenge: 'EMAIL_OTP' },

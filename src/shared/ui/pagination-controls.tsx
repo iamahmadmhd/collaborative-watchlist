@@ -1,11 +1,8 @@
 import type { ReactNode } from 'react';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
 
-// Shared prev/next pager, extracted from discover-page.tsx and search-page.tsx
-// (both drove an identical pair of buttons off a TMDB-paginated query). `info`
-// is a caller-supplied slot rather than a fixed "page X / Y" label so each
-// screen keeps its own copy (discover adds a result count, search doesn't) and
-// its own position in the row (`infoPosition`) rather than forcing one layout.
+// Shared prev/next pager. `info` is a caller-supplied slot rather than a fixed
+// "page X / Y" label, so each screen keeps its own copy and its own position in the row.
 export function PaginationControls({
     page,
     totalPages,

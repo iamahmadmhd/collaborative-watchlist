@@ -11,13 +11,8 @@ import { PaginationControls } from '../../shared/ui/pagination-controls';
 import { QueryState } from '../../shared/ui/query-state';
 import { MagnifyingGlassIcon } from '@heroicons/react/24/solid';
 
-// docs/design/Discovery.dc.html. The header search box is presentational in
-// the mock itself (a styled div, not an input, even there) — it's the entry
-// point into the dedicated Search screen (docs' "02 Search", pages/search/search-page.tsx),
-// not inline live search. Same reasoning for the mock's "2020s" decade pill: no
-// FR backs a decade filter and `discoverMovies` takes no such argument
-// (amplify/data/resource.ts) — CLAUDE.md says stop and ask rather than invent
-// one, so it's left out rather than shipped as a control that does nothing.
+// The header search box is the entry point into the dedicated Search screen, not inline
+// live search.
 export function DiscoverPage({
     genreId,
     page,
@@ -37,9 +32,8 @@ export function DiscoverPage({
     const activeGenreName = genreId !== undefined ? genres?.find((g) => g.id === genreId)?.name : undefined;
     const heading = activeGenreName ? activeGenreName : 'Trending this week';
 
-    // The "/" hint next to the search box (docs/design/Discovery.dc.html) is a
-    // real shortcut, not decoration — skipped while any control on the page
-    // already has focus so it doesn't hijack typing into the genre Select.
+    // Skipped while any control already has focus, so it never hijacks typing into the
+    // genre Select.
     useEffect(() => {
         function handleKeyDown(event: KeyboardEvent) {
             const target = event.target as HTMLElement | null;
@@ -87,7 +81,7 @@ export function DiscoverPage({
                                 infoPosition='start'
                                 info={
                                     <span>
-                                        page {moviesQuery.data.page} / {Math.max(moviesQuery.data.totalPages, 1)}
+                                        page {page} / {Math.max(moviesQuery.data.totalPages, 1)}
                                     </span>
                                 }
                             />
@@ -127,11 +121,6 @@ export function DiscoverPage({
                         savedSet={savedSet}
                         gridClassName='grid grid-cols-3 gap-x-3 gap-y-4'
                     />
-                    {/* FR-DISC-5: the board's mobile frame doesn't show pagination at
-                        all (it's a fixed-height preview frame cut off below the
-                        fold), but the requirement — and the URL page state — apply
-                        here exactly as on desktop, so this is the faithful-adaptation
-                        equivalent, not new scope. */}
                     {moviesQuery.data && (
                         <PaginationControls
                             page={page}
@@ -140,7 +129,7 @@ export function DiscoverPage({
                             infoPosition='start'
                             info={
                                 <span>
-                                    page {moviesQuery.data.page} / {Math.max(moviesQuery.data.totalPages, 1)}
+                                    page {page} / {Math.max(moviesQuery.data.totalPages, 1)}
                                 </span>
                             }
                             className='justify-center py-10'
@@ -174,7 +163,7 @@ function MovieGrid({
             errorPrefix='Could not load movies.'
         >
             {(data) => {
-                // Same generated-nullability note as use-genres.ts's filter.
+                // Narrows the generated nullability, as use-genres.ts does.
                 const movies = data.results.filter((movie): movie is MovieSummary => movie != null);
 
                 if (movies.length === 0) {

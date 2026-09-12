@@ -4,46 +4,19 @@ import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from '@aws-s
 import type { Schema } from '../../data/resource';
 import { conditionalCheckFailedAt } from '../shared/transact-write-errors';
 
-// membership — System Design §4.2, §4.4, §4.5
+// Add / remove / leave / change role. Every operation writes both a
+// WatchlistMember record and the parent Watchlist's editors/viewers array, so all
+// of them go through TransactWriteItems against DynamoDB directly — AppSync has no
+// transactional multi-model mutation. Table names arrive via process.env from
+// backend.ts.
 //
-// The transactional function: add / remove / leave a collaborator. Adding a
-// collaborator writes a WatchlistMember record AND pushes the user into the
-// parent Watchlist's editors/viewers array — two tables, and FR-MEM-8 forbids
-// an observable partial result (one table updated, the other not).
+// Because these writes never pass through AppSync, the schema's authorization rules
+// do not apply to them: the caller checks below are the enforcement.
 //
-// This talks to DynamoDB directly via TransactWriteItems, bypassing AppSync
-// entirely for its writes — there is no generated-resolver or GraphQL
-// equivalent for an atomic write across two models. Table names arrive via
-// process.env, injected post-hoc in backend.ts once backend.data's tables
-// exist (see resource.ts). Because these writes never go through AppSync,
-// Amplify's allow.owner()/ownersDefinedIn() rules on Watchlist have no bearing
-// on this function at all — those rules only govern GraphQL-originating
-// requests. The authorization checks below (ownerId comparison, self-only
-// leave) ARE the enforcement mechanism for FR-MEM-9 on this path; the
-// data/resource.ts field-level rules close the *separate* GraphQL-facing hole
-// (an Editor calling the generic update mutation directly).
-//
-// Remove and leave are the same transaction inverted: both delete a
-// WatchlistMember row and drop the user from whichever of editors/viewers
-// they were in. They differ only in who may call them (Owner-only for
-// removeMember; any collaborator acting on themselves for leaveWatchlist) and
-// in the FR-MEM-6 guard (the Owner can never be the target of either).
-//
-// Concurrency: editors/viewers arrays are read, then rewritten via a
-// list-equality condition (`editors = :oldEditors`) as an optimistic lock —
-// DynamoDB has no "remove one value from a list" primitive, so a full-array
-// compare-and-swap is the mechanism. attribute_not_exists(editors) is OR'd in
-// because a freshly created Watchlist may not have the attribute set at all
-// (no array-type default exists in the Amplify Data schema builder); treating
-// "absent" as "empty" avoids a false CONFLICT on a brand-new list. A
-// concurrent membership change on the same watchlist loses this race and
-// surfaces CONFLICT — rare (bounded by FR-MEM-7's 20-member cap), and the
-// caller can retry.
-//
-// This function is also the mechanism by which FR-MEM-9 / NFR-SEC-2 hold on
-// the GraphQL surface: since ownerId/editors/viewers have no update grant to
-// anyone via AppSync (data/resource.ts field-level auth), this Lambda's direct
-// IAM-granted table access is the ONLY way those fields ever change.
+// The editors/viewers arrays are rewritten under a list-equality condition as an
+// optimistic lock — DynamoDB cannot remove a single value from a list, so the whole
+// array is compare-and-swapped. attribute_not_exists is OR'd in because a freshly
+// created Watchlist has no array attribute at all; a lost race surfaces CONFLICT.
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
@@ -52,9 +25,8 @@ const WATCHLIST_TABLE = process.env.WATCHLIST_TABLE_NAME!;
 const WATCHLIST_MEMBER_TABLE = process.env.WATCHLIST_MEMBER_TABLE_NAME!;
 const USERNAME_TABLE = process.env.USERNAME_TABLE_NAME!;
 
-// FR-MEM-7: 20 members per watchlist, including the Owner. Enforced as a
-// pre-check (below) rather than a DynamoDB-side condition — see the file
-// header on why size() can't safely gate on a possibly-absent array attribute.
+// Including the Owner. Enforced as a pre-check rather than a DynamoDB condition:
+// size() cannot safely gate on a possibly-absent array attribute.
 const MAX_MEMBERS = 20;
 
 type AddMemberArgs = Schema['addMember']['args'];
@@ -135,14 +107,9 @@ async function addMember(args: AddMemberArgs, callerId: string): Promise<AddMemb
                     {
                         Put: {
                             TableName: WATCHLIST_MEMBER_TABLE,
-                            // createdAt/updatedAt set explicitly — this TransactWriteItems call
-                            // bypasses the generated resolver that would normally populate them,
-                            // and Amplify's generated schema marks both non-null. Leaving them
-                            // absent doesn't just omit a nicety: AppSync nulls the whole item on
-                            // read (GraphQL null-propagation from a missing non-null field), which
-                            // is exactly what broke useWatchlists() the first time a raw-SDK
-                            // WatchlistMember write (permission-fanout's own, same fix) was read
-                            // back through the generated client — see that function's handler.ts.
+                            // Set explicitly: a raw SDK write bypasses the generated resolver
+                            // that would populate them, and the generated schema marks both
+                            // non-null — a missing one nulls the entire item on read.
                             Item: {
                                 watchlistId: args.watchlistId,
                                 userId: targetUserId,
@@ -151,8 +118,8 @@ async function addMember(args: AddMemberArgs, callerId: string): Promise<AddMemb
                                 createdAt: now,
                                 updatedAt: now,
                             },
-                            // Composite-key uniqueness, same idiom as Username.create() (ADR-008):
-                            // a concurrent duplicate add fails here, not with a check-then-write race.
+                            // Composite-key uniqueness: a concurrent duplicate add fails here
+                            // rather than in a check-then-write race.
                             ConditionExpression: 'attribute_not_exists(watchlistId)',
                         },
                     },
@@ -185,7 +152,7 @@ async function removeFromWatchlist(
     if (requireOwnerCaller && watchlist.ownerId !== callerId) {
         return { success: false, error: 'NOT_OWNER' };
     }
-    // FR-MEM-6: the Owner can neither leave nor be removed from their own watchlist.
+    // The Owner can neither leave nor be removed from their own watchlist.
     if (targetUserId === watchlist.ownerId) {
         return { success: false, error: 'CANNOT_REMOVE_OWNER' };
     }
@@ -198,10 +165,8 @@ async function removeFromWatchlist(
     const newEditors = editors.filter((id) => id !== targetUserId);
     const newViewers = viewers.filter((id) => id !== targetUserId);
 
-    // requireOwnerCaller is re-asserted here, not just in the JS pre-check above, so the
-    // owner gate is atomic with the write rather than TOCTOU-able — same reasoning as
-    // addMember's `ownerId = :callerId` condition, kept consistent across both paths even
-    // though ownerId happens to be write-once today (see file header).
+    // Re-asserted here, not just in the pre-check above, so the owner gate is atomic
+    // with the write rather than TOCTOU-able.
     const ownerConditionExpression = requireOwnerCaller ? 'ownerId = :callerId AND ' : '';
 
     try {
@@ -247,14 +212,9 @@ async function removeFromWatchlist(
     return { success: true, error: null };
 }
 
-// FR-MEM-3's "change it afterwards" clause. Mirrors addMember/removeFromWatchlist's
-// shape exactly: read the Watchlist, assert caller===ownerId, move the target between
-// the editors/viewers arrays under the same list-equality optimistic lock, and update
-// WatchlistMember.role in the same transaction so the membership record and the
-// permission arrays never observably disagree (FR-MEM-8). permission-fanout's own
-// Watchlist-stream handler already diffs old/new editors/viewers unconditionally
-// (handler.ts there), so a role swap fans out to WatchlistItem exactly like an
-// add/remove would — nothing about that consumer needed to change.
+// Moves the target between the editors/viewers arrays and updates
+// WatchlistMember.role in one transaction, so the record and the arrays never
+// observably disagree.
 async function changeMemberRole(args: ChangeRoleArgs, callerId: string): Promise<ChangeRoleResult> {
     const role = args.role;
     if (role !== 'EDITOR' && role !== 'VIEWER') {
@@ -268,7 +228,7 @@ async function changeMemberRole(args: ChangeRoleArgs, callerId: string): Promise
     if (watchlist.ownerId !== callerId) {
         return { success: false, error: 'NOT_OWNER' };
     }
-    // FR-MEM-6: the Owner's own role is fixed — nothing to reassign it to.
+    // The Owner's own role is fixed — there is nothing to reassign it to.
     if (args.userId === watchlist.ownerId) {
         return { success: false, error: 'CANNOT_CHANGE_OWNER' };
     }
@@ -333,27 +293,12 @@ async function changeMemberRole(args: ChangeRoleArgs, callerId: string): Promise
     return { success: true, error: null };
 }
 
-// Dispatch is by argument shape, not event.info.fieldName: in a real
-// deployment, event.info comes back undefined while event.identity/
-// event.arguments are present (confirmed via CloudWatch: "Cannot read
-// properties of undefined (reading 'fieldName')" at that switch, with the
-// crash happening after event.identity was already read successfully on the
-// line above it). A previous revision of this comment guessed the cause was
-// this function's `resourceGroupName: 'data'` override (resource.ts, needed
-// to avoid a CloudFormation circular dependency between the data stack and
-// this function's stack) supposedly changing how AppSync's generated
-// resolver invokes it — and that tmdb-proxy/handler.ts's identical
-// switch-on-event.info.fieldName pattern was fine without that override.
-// That guess is disproven: tmdb-proxy hits the identical crash despite
-// having no such override (see its own handler.ts), so event.info is
-// unreliable for Lambda-backed multi-operation custom queries/mutations in
-// this deployment generally, not something tied to one function's resource
-// grouping. Whatever the real cause is, it isn't fixable from here, so both
-// functions dispatch on the arguments' own shape instead: this function's
-// four operations' argument sets are mutually distinguishable by
-// construction (only addMember carries `username`; only removeMember/
-// changeMemberRole carry `userId`, and only the latter also carries `role`;
-// leaveWatchlist carries neither).
+// Dispatch is by argument shape, not event.info.fieldName: event.info arrives
+// undefined for Lambda-backed custom operations in this deployment, while
+// event.identity and event.arguments are present. The four argument sets are
+// mutually distinguishable — only addMember carries `username`, only removeMember
+// and changeMemberRole carry `userId`, only the latter also carries `role`, and
+// leaveWatchlist carries neither.
 export const handler: AppSyncResolverHandler<Record<string, unknown>, unknown> = async (event) => {
     const callerId = (event.identity as AppSyncIdentityCognito).sub;
     const args = event.arguments as Record<string, unknown>;
@@ -366,10 +311,10 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, unknown> =
         if ('role' in args) {
             return changeMemberRole(args as ChangeRoleArgs, callerId);
         }
-        // FR-MEM-4: only the Owner may remove another member.
+        // Only the Owner may remove another member.
         return removeFromWatchlist((args as RemoveMemberArgs).watchlistId, args.userId, callerId, true);
     }
 
-    // FR-MEM-5: any collaborator may remove themselves — no Owner-caller check.
+    // Any collaborator may remove themselves — no Owner-caller check.
     return removeFromWatchlist((args as LeaveWatchlistArgs).watchlistId, callerId, callerId, false);
 };

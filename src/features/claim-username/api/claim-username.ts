@@ -2,24 +2,17 @@ import { useEffect, useState } from 'react';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
 
-// FR-AUTH-3/4/5, ADR-011. Shared by the post-verification username screen
-// (src/pages/auth/set-username.tsx — the primary path, run once right after
-// email verification) and, per ADR-011's consequences, Settings — the narrower
-// recovery path for a member who verified but never finished that screen. Both
-// callers claim through the same claimUsername mutation, so the logic lives
-// here once rather than being duplicated per caller.
+// Shared by the post-verification username screen and Settings' recovery path, which
+// both claim through the same mutation.
 //
-// Not shared with the backend: amplify/** and src/** are separate compilation
-// contexts, so this is a deliberate, separately-maintained duplicate of the
-// pattern check in claim-username/handler.ts (System Design §2.5 — "UX only";
-// the actual enforcement is claimUsername's conditional write on submit).
+// The pattern check is a deliberate duplicate of the handler's: amplify/** and src/**
+// are separate compilation contexts. This copy is UX only — the enforcement is the
+// conditional write on submit.
 export const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 
-// Debounced live-availability indicator (System Design §2.5). Presentational
-// only — a collision that slips past this still surfaces as ALREADY_TAKEN from
-// claimUsername on submit, which is the real, atomic enforcement. Stale results
-// are ignored by comparing the resolved value against the candidate current at
-// render time, rather than clearing state on every keystroke.
+// Presentational only: a collision that slips past still surfaces as ALREADY_TAKEN on
+// submit, which is the atomic enforcement. Stale results are ignored by comparing the
+// resolved value against the current candidate rather than clearing on every keystroke.
 export function useUsernameAvailability(candidate: string | undefined, validFormat: boolean) {
     const [availability, setAvailability] = useState<{ value: string; available: boolean } | null>(null);
 
@@ -37,21 +30,16 @@ export function useUsernameAvailability(candidate: string | undefined, validForm
     return validFormat && availability?.value === candidate ? availability : null;
 }
 
-export type ClaimUsernameError = 'INVALID_FORMAT' | 'ALREADY_CLAIMED' | 'ALREADY_TAKEN' | 'UNKNOWN';
+export type ClaimUsernameError =
+    'INVALID_FORMAT' | 'ALREADY_CLAIMED' | 'ALREADY_TAKEN' | 'DISPLAY_NAME_FAILED' | 'UNKNOWN';
 export type ClaimUsernameOutcome = { success: true } | { success: false; error: ClaimUsernameError };
 
-// FR-AUTH-5 rides along optionally: a display name set on the same screen is
-// written straight after a successful claim, not as a separate step.
+// A display name set on the same screen is written straight after a successful claim.
 //
-// A plain async function, not a TanStack Query mutation: this is called from
-// the post-verification username screen, which lives under the router's
-// `_auth/**` group — the one subtree QueryClientProvider deliberately does
-// NOT wrap (`_app/route.tsx`'s own comment: "`_auth/**` never imports this
-// module", to keep TanStack Query out of the eager auth-shell bundle,
-// NFR-PERF-4). A `useMutation` here would throw "No QueryClient set" the
-// moment this screen rendered. ClaimUsernameForm doesn't need a mutation
-// object's own pending/error state anyway — it already tracks submission via
-// react-hook-form's own `isSubmitting`.
+// A plain async function rather than a TanStack Query mutation: this runs under the
+// router's `_auth/**` group, which QueryClientProvider deliberately does not wrap, so
+// a useMutation here would throw "No QueryClient set". The form tracks submission
+// through react-hook-form's own isSubmitting anyway.
 export async function claimUsername({
     username,
     displayName,
@@ -63,12 +51,27 @@ export async function claimUsername({
     if (errors?.length || !data) {
         return { success: false, error: 'UNKNOWN' };
     }
-    if (!data.success) {
+    // ALREADY_CLAIMED means the claim landed — on a retry after the display-name write
+    // below failed, or in another tab. Reporting it as a failure would leave a member
+    // who already has a username with no way past this form.
+    if (!data.success && data.error !== 'ALREADY_CLAIMED') {
         return { success: false, error: data.error ?? 'UNKNOWN' };
     }
+    // Past this point the username is durably claimed, so a failure here is reported as
+    // its own outcome rather than as a failed claim. Resubmitting retries just this write.
     if (displayName) {
-        const { userId } = await getCurrentUser();
-        await client.models.UserProfile.update({ id: userId, displayName });
+        try {
+            const { userId } = await getCurrentUser();
+            const { data: profile, errors: updateErrors } = await client.models.UserProfile.update({
+                id: userId,
+                displayName,
+            });
+            if (updateErrors?.length || !profile) {
+                return { success: false, error: 'DISPLAY_NAME_FAILED' };
+            }
+        } catch {
+            return { success: false, error: 'DISPLAY_NAME_FAILED' };
+        }
     }
     return { success: true };
 }

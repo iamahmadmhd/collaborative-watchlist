@@ -1,6 +1,6 @@
-# Collaborative Movie Discovery & Watchlist
+# Repertory
 
-A movie discovery and watchlist app. Authenticated members browse and search films (sourced
+A collaborative movie discovery and watchlist app. Authenticated members browse and search films (sourced
 from [TMDB](https://www.themoviedb.org/)), save titles privately, and build watchlists that
 other members can collaborate on in real time — with per-list Owner / Editor / Viewer roles
 and changes syncing live across everyone viewing the same list.
@@ -27,9 +27,10 @@ pnpm sandbox        # starts a local Amplify backend sandbox (needs AWS credenti
 pnpm dev             # in a second terminal
 ```
 
-You'll need a TMDB API key before `tmdb-proxy` works — get one from
-<https://www.themoviedb.org/settings/api> and store it via
-`npx ampx sandbox secret set TMDB_API_KEY` (SSM-backed — never put it in `.env`, see FR-TMDB-1).
+You'll need a TMDB credential before `tmdb-proxy` works. Get a **Read Access Token** (the
+bearer token, not the legacy v3 API key) from <https://www.themoviedb.org/settings/api> and
+store it via `npx ampx sandbox secret set TMDB_ACCESS_TOKEN` — SSM-backed, never in `.env`
+(FR-TMDB-1).
 
 ## Scripts
 
@@ -65,14 +66,16 @@ src/
   app/        providers, router (file-based routes), layouts, global styles
   pages/      discover, search, movie-detail, saved, watchlists, watchlist-detail, settings, auth
   features/   save-movie, manage-list-items, manage-members, toggle-watched,
-              create-watchlist, filter-discovery, claim-username
+              create-watchlist, filter-discovery, claim-username, edit-profile,
+              delete-account, sign-out
   entities/   movie, watchlist, member (each with ui/ model/ api/)
   shared/     ui (Base UI wrappers), lib, config
 
 amplify/
   auth/       Cognito user pool + triggers
   data/       schema, auth rules, custom operations
-  functions/  post-confirmation, tmdb-proxy, membership, claim-username, permission-fanout
+  functions/  post-confirmation, tmdb-proxy, membership, claim-username, permission-fanout,
+              watchlist-item, delete-account, image-proxy
 ```
 
 See [`CLAUDE.md`](CLAUDE.md) for the full naming and layering rules, including the one
@@ -80,35 +83,33 @@ framework-mandated exception (`src/app/router/`, where TanStack Router owns file
 
 ## Status
 
-This is a scaffold, still early:
+The application is built and functional end to end: registration and passwordless sign-in,
+discovery, search, movie detail, saved films, watchlists with collaborators and per-list
+roles, watched tracking, real-time sync on an open list, theming, and account deletion.
+All eight backend functions are implemented.
 
-- Folder structure follows Feature-Sliced Design (System Design §2.2). Only `app/` exists
-  under `src/` so far — `pages/`, `features/`, `entities/`, `shared/` get created as each
-  feature is built.
-- `amplify/data/resource.ts` has the seven data models from §5.1 with **partial** auth
-  rules — the field-level permission rules that satisfy FR-MEM-9/NFR-SEC-2 are stubbed as
-  TODOs and must be implemented before this is safe to deploy publicly. Read the TODO
-  comment on the `Watchlist` model before touching auth rules.
-- `post-confirmation` is implemented (creates the `UserProfile` row on signup, FR-MEM-10)
-  and wired as an auth trigger. The remaining four Lambdas in `amplify/functions/*/handler.ts`
-  still have only a contract comment, no implementation.
-- `tests/auth-matrix/watchlist-permissions.test.ts` encodes SRS §6.1's full authorization
-  matrix as `it.todo(...)` — fill these in as you implement each permission path.
-- No UI beyond the router scaffold exists yet — no auth screens, no pages, no components.
+Two gaps are worth knowing before picking something up:
 
-## Suggested build order
+- **The authorization test matrix is not filled in.** `tests/auth-matrix/watchlist-permissions.test.ts`
+  encodes SRS §6.1 as `it.todo(...)` cells. Authorization is this project's principal
+  correctness claim, so this is the largest outstanding piece of work. Each cell must be
+  asserted against the API, never the UI.
+- **Three specified features are not built**: renaming a list (FR-LIST-2/3), drag
+  reordering items (FR-ITEM-5), and the avatar half of FR-AUTH-5.
 
-Roughly the order the System Design document itself argues for (auth model first, since
-everything else's authorization depends on it existing):
+System Design §11 carries the full status table, including the screen elements that are
+deliberately absent because no requirement or data backs them.
 
-1. `amplify/auth` + `post-confirmation` — registration, verification, UserProfile creation ✅
-2. `claim-username` — atomic username claiming (FR-AUTH-3/4)
-3. Discovery + `tmdb-proxy` — authenticated-only as of v1.1 (ADR-009), so this now depends on step 1
-4. Saved films — simplest authenticated feature, good place to prove the TanStack Query + Amplify wiring
-5. Watchlists (owner-only, no collaboration yet) — `create-watchlist`, `manage-list-items`
-6. `membership` function + collaboration + the permission fan-out stream consumer
-7. Real-time subscriptions on `/lists/:id` (System Design §2.4) — do this only after permissions are solid; the self-echo reconciliation logic assumes correct auth underneath it
-8. Theme system, design tokens, attribution stripe — can happen in parallel with any of the above
+## Conventions
+
+Two rules the codebase enforces rather than suggests:
+
+- **Layering.** `app > pages > features > entities > shared`, checked by
+  `eslint-plugin-boundaries`. A slice never imports a sibling in the same layer.
+- **Comments explain mechanism; documents record decisions.** Rationale, alternatives
+  considered, and requirement traceability belong in `docs/`, not in source comments. A
+  comment in the code should say what a non-obvious line does or why it is load-bearing,
+  and stop there.
 
 ## Constraints
 

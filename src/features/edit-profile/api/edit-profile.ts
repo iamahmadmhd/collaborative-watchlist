@@ -3,13 +3,8 @@ import { getCurrentUser } from 'aws-amplify/auth';
 import { client } from '../../../shared/lib/amplify-client';
 import { CURRENT_USER_QUERY_KEY } from '../../../entities/member/api/use-current-user';
 
-// FR-AUTH-5's display-name half, as an ongoing edit rather than the one-time write
-// claim-username/api/claim-username.ts makes alongside the username claim itself.
-// A plain UserProfile.update() against the model's own owner-write rule
-// (data/resource.ts: `allow.owner().to(['read', 'update'])`) — no dedicated Lambda
-// needed, unlike username (which has to go through the atomic conditional write in
-// claim-username for FR-AUTH-4's uniqueness guarantee). Renaming yourself carries
-// no such uniqueness constraint.
+// A plain UserProfile.update() against the model's own owner-write rule. Unlike the
+// username, a display name carries no uniqueness constraint, so it needs no Lambda.
 export function useUpdateDisplayName() {
     const queryClient = useQueryClient();
 

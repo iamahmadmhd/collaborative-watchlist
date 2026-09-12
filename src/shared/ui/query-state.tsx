@@ -1,11 +1,8 @@
 import type { ReactNode } from 'react';
 
-// The isPending/isError/empty three-way branch repeated across every list-ish
-// screen (discover, search, saved, watchlists, watchlist-detail items) — same
-// decision every time, different skeleton/empty markup and error copy per
-// caller. This unifies the branching only; callers still supply their own
-// pending fallback, error copy/classes, and (for arrays) empty state, so a
-// dense grid skeleton and a row-list skeleton don't have to look alike.
+// The isPending/isError/empty branch every list screen repeats. This unifies the
+// branching only — callers still supply their own pending fallback, error copy and
+// empty state, so a grid skeleton and a row-list skeleton need not look alike.
 type BasicQueryState<TData> = {
     isPending: boolean;
     isError: boolean;

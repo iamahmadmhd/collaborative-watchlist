@@ -1,26 +1,24 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { client } from '../../../shared/lib/amplify-client';
+import { listAll } from '../../../shared/lib/amplify-result';
 import type { WatchlistItemRecord } from '../model/watchlist';
 
 export function watchlistItemsQueryKey(watchlistId: string) {
     return ['watchlist-items', watchlistId];
 }
 
-// §5.3: fractional-rank strings sort correctly under plain string comparison
-// — "Items sort in memory, so no index is required for ordering."
+// Fractional-rank strings sort correctly under plain string comparison, so ordering
+// needs no index.
 function sortByPosition(items: WatchlistItemRecord[]): WatchlistItemRecord[] {
     return [...items].sort((a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0));
 }
 
 function upsertItem(items: WatchlistItemRecord[] | undefined, item: WatchlistItemRecord): WatchlistItemRecord[] {
-    // Keyed on tmdbId, not a server-generated id: WatchlistItem's own identifier
-    // (watchlistId, tmdbId — data/resource.ts) is known client-side the instant a
-    // movie is picked, so unlike the general "temp id -> server id" case §2.4
-    // describes, there is no id to swap here. An upsert-by-tmdbId is already
-    // self-echo-safe: our own optimistic write and the subscription event that
-    // echoes it back both resolve to the same key, so the second one overwrites
-    // the first with equivalent data instead of appending a duplicate row.
+    // Keyed on tmdbId rather than a server-generated id: WatchlistItem's identifier is
+    // known client-side the instant a movie is picked, so there is no temporary id to
+    // swap. That makes the upsert self-echo-safe on its own — the optimistic write and
+    // the subscription event echoing it back resolve to the same key.
     const withoutExisting = (items ?? []).filter((existing) => existing.tmdbId !== item.tmdbId);
     return sortByPosition([...withoutExisting, item]);
 }
@@ -29,24 +27,22 @@ function removeItem(items: WatchlistItemRecord[] | undefined, tmdbId: string): W
     return (items ?? []).filter((existing) => existing.tmdbId !== tmdbId);
 }
 
-// System Design §5.2 access pattern 4 (items in list -> WatchlistItem PK query)
-// plus §2.4's real-time integration in full:
-//   - subscription opens on mount, closes on unmount (the effect below, scoped
-//     to this hook's own lifecycle — its one caller is the /lists/:id page)
-//   - filtered by watchlistId, never a global stream (FR-SYNC-2)
-//   - three writers into one cache entry: initial list() here, optimistic
-//     writes from features/manage-list-items' onMutate, and these subscription
-//     events — all keyed by watchlistItemsQueryKey(watchlistId)
-//   - on subscription interruption (the observable's error callback), refetch
-//     rather than assume continuity (FR-SYNC-5)
+// The items query plus the real-time integration described in System Design §2.4: the
+// subscription opens on mount and closes on unmount, filtered by watchlistId rather
+// than global; three writers feed one cache entry (this list(), optimistic writes from
+// features/manage-list-items, and inbound events); an interruption refetches rather
+// than assuming continuity.
 export function useWatchlistItems(watchlistId: string) {
     const queryClient = useQueryClient();
 
     const query = useQuery({
         queryKey: watchlistItemsQueryKey(watchlistId),
         queryFn: async (): Promise<WatchlistItemRecord[]> => {
-            const { data } = await client.models.WatchlistItem.list({ watchlistId });
-            return sortByPosition(data);
+            const items = await listAll<WatchlistItemRecord>(
+                (nextToken) => client.models.WatchlistItem.list({ watchlistId, nextToken }),
+                "Could not load this list's films.",
+            );
+            return sortByPosition(items);
         },
     });
 

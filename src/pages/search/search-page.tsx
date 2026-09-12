@@ -10,17 +10,6 @@ import { QueryState } from '../../shared/ui/query-state';
 
 const SEARCH_DEBOUNCE_MS = 300;
 
-// docs/design/Search.dc.html. Two things the mock shows that this page
-// deliberately doesn't reproduce:
-// - The "Drama ▼" genre pill: `searchMovies` (amplify/data/resource.ts) takes
-//   only `query`/`page`, no genre argument — same reasoning as discover-page.tsx's
-//   dropped "2020s" pill, no FR backs genre-filtered search and there's no
-//   argument to invent one against.
-// - The suggestions dropdown and each result's "blurb"/genre columns: both need
-//   data `MovieSummary` doesn't carry — no synopsis/genre fields, only
-//   tmdbId/title/posterPath/releaseYear (entities/movie/model/movie.ts). Movie
-//   Detail exists now, so each row does link there; a separate typeahead
-//   endpoint would still be new backend scope no FR asks for.
 export function SearchPage({
     query,
     page,
@@ -33,26 +22,23 @@ export function SearchPage({
     onPageChange: (page: number) => void;
 }) {
     const navigate = useNavigate();
-    // Debounce is tracked via a ref (mutated from the input's own onChange
-    // event handler, never during render) rather than component state — an
-    // uncontrolled input, keyed by `query` below, already handles both "typed
-    // value renders immediately" and "external navigation updates the field"
-    // without a render-synced copy of `query` to keep consistent.
+    // Tracked in a ref, mutated from onChange and never during render: the uncontrolled
+    // input keyed by `query` below already handles both immediate typing and external
+    // navigation without a render-synced copy to keep consistent.
     const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
     useEffect(() => {
         return () => clearTimeout(debounceRef.current);
     }, []);
 
-    // FR-DISC-5 puts `q` in the URL, but committing it on every keystroke would
-    // spam both browser history and TMDB requests, so this only fires once
-    // typing pauses.
+    // `q` lives in the URL, but committing on every keystroke would spam both browser
+    // history and TMDB requests, so this fires only once typing pauses.
     function handleInputChange(value: string) {
         clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => onQueryChange(value), SEARCH_DEBOUNCE_MS);
     }
 
-    // Bypasses the debounce for an explicit clear (mobile's "CLEAR" hint).
+    // Bypasses the debounce for an explicit clear.
     function commitQuery(value: string) {
         clearTimeout(debounceRef.current);
         onQueryChange(value);
@@ -74,8 +60,7 @@ export function SearchPage({
             <div className='hidden min-h-0 min-w-0 flex-1 flex-col lg:flex'>
                 <header className='border-border bg-raised flex flex-none items-center gap-3 border-b px-7 py-4'>
                     <SearchInput
-                        key={query}
-                        defaultValue={query}
+                        value={query}
                         onChange={handleInputChange}
                         onKeyDown={handleKeyDown}
                         hint='ESC'
@@ -84,7 +69,7 @@ export function SearchPage({
                 </header>
 
                 <div className='min-h-0 flex-1 overflow-y-auto px-7 pt-6'>
-                    <SearchResultsHeader hasQuery={hasQuery} query={query} moviesQuery={moviesQuery} />
+                    <SearchResultsHeader hasQuery={hasQuery} query={query} page={page} moviesQuery={moviesQuery} />
                     <SearchResultsList
                         moviesQuery={moviesQuery}
                         hasQuery={hasQuery}
@@ -111,8 +96,7 @@ export function SearchPage({
             <div className='flex min-h-0 flex-1 flex-col lg:hidden'>
                 <div className='border-border bg-raised flex flex-none flex-col gap-2.5 border-b px-4 pt-11 pb-3'>
                     <SearchInput
-                        key={query}
-                        defaultValue={query}
+                        value={query}
                         onChange={handleInputChange}
                         onKeyDown={handleKeyDown}
                         hint='CLEAR'
@@ -121,7 +105,7 @@ export function SearchPage({
                 </div>
                 <div className='min-h-0 flex-1 overflow-y-auto'>
                     <div className='px-4 pt-3'>
-                        <SearchResultsHeader hasQuery={hasQuery} query={query} moviesQuery={moviesQuery} />
+                        <SearchResultsHeader hasQuery={hasQuery} query={query} page={page} moviesQuery={moviesQuery} />
                     </div>
                     <SearchResultsList
                         moviesQuery={moviesQuery}
@@ -148,31 +132,46 @@ export function SearchPage({
     );
 }
 
-// Uncontrolled by design: the parent remounts this (via `key={query}`)
-// whenever `query` changes for any reason — the debounce committing, back/
-// forward navigation, a shared link — so there's no controlled `value` to
-// keep in sync, and no risk of the two falling out of step.
+// Uncontrolled: the DOM holds the text, and `value` is only pushed in when it changes
+// from outside this box — a back-navigation, or the ESC/CLEAR control. Remounting on
+// every committed query instead would reset the caret to the end mid-edit.
 function SearchInput({
-    defaultValue,
+    value,
     onChange,
     onKeyDown,
     hint,
     onHintClick,
 }: {
-    defaultValue: string;
+    value: string;
     onChange: (value: string) => void;
     onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
     hint: string;
     onHintClick: () => void;
 }) {
     const inputRef = useRef<HTMLInputElement>(null);
+    // True while this box holds text the parent has not caught up to, which is what
+    // stops an in-flight debounce from stomping the characters typed after it.
+    const isDirtyRef = useRef(false);
 
-    // Runs once per mount, i.e. once per `query`-driven remount — never on an
-    // unrelated re-render (a movies-query refetch, a saved-set update), so it
-    // never steals focus from something else on the page.
+    // Once per mount, so it cannot steal focus from something else on the page.
     useEffect(() => {
         inputRef.current?.focus();
     }, []);
+
+    useEffect(() => {
+        const input = inputRef.current;
+        if (!input) {
+            return;
+        }
+        if (input.value === value) {
+            isDirtyRef.current = false;
+            return;
+        }
+        if (isDirtyRef.current) {
+            return;
+        }
+        input.value = value;
+    }, [value]);
 
     return (
         <div className='border-accent bg-surface flex h-9.5 flex-1 items-center gap-2.5 rounded-[3px] border px-3 text-sm shadow-[0_0_0_3px_color-mix(in_oklab,var(--accent)_18%,transparent)]'>
@@ -180,8 +179,11 @@ function SearchInput({
             <input
                 ref={inputRef}
                 type='text'
-                defaultValue={defaultValue}
-                onChange={(event) => onChange(event.target.value)}
+                defaultValue={value}
+                onChange={(event) => {
+                    isDirtyRef.current = true;
+                    onChange(event.target.value);
+                }}
                 onKeyDown={onKeyDown}
                 placeholder='Search films by title'
                 aria-label='Search films by title'
@@ -201,10 +203,12 @@ function SearchInput({
 function SearchResultsHeader({
     hasQuery,
     query,
+    page,
     moviesQuery,
 }: {
     hasQuery: boolean;
     query: string;
+    page: number;
     moviesQuery: ReturnType<typeof useSearchMovies>;
 }) {
     if (!hasQuery) {
@@ -218,8 +222,7 @@ function SearchResultsHeader({
             </h1>
             {moviesQuery.data && (
                 <span className='text-muted flex-none font-mono text-[11px]'>
-                    page {moviesQuery.data.page} / {Math.max(moviesQuery.data.totalPages, 1)} ·{' '}
-                    {moviesQuery.data.totalResults} titles
+                    page {page} / {Math.max(moviesQuery.data.totalPages, 1)} · {moviesQuery.data.totalResults} titles
                 </span>
             )}
         </div>
@@ -263,7 +266,7 @@ function SearchResultsList({
             errorClassName={rowClassName}
         >
             {(data) => {
-                // Same generated-nullability note as use-genres.ts's filter.
+                // Narrows the generated nullability, as use-genres.ts does.
                 const movies = data.results.filter((movie): movie is MovieSummary => movie != null);
 
                 if (movies.length === 0) {
@@ -300,8 +303,8 @@ function SearchResultRow({
 
     return (
         <div className={`border-border flex items-center gap-4 border-b py-2.75 ${rowClassName}`}>
-            {/* FR-DISC-4's entry point from Search — same reasoning as movie-card.tsx:
-                SaveControl stays outside the Link, not nested inside it. */}
+            {/* SaveControl stays outside the Link, not nested inside it — see
+                movie-card.tsx. */}
             <Link
                 to='/movie/$movieId'
                 params={{ movieId: movie.tmdbId }}

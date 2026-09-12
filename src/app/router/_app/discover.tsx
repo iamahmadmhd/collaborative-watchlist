@@ -3,9 +3,8 @@ import { discoverSearchSchema } from '../../../features/filter-discovery/model/d
 import { DiscoverPage } from '../../../pages/discover/discover-page';
 import { AppShell } from '../../layouts/app-shell';
 
-// FR-DISC-1/3/5. Route files compose pages and configure them (CLAUDE.md) —
-// AppShell wraps here, not inside the page component, because `app/layouts` is
-// app-layer and pages may not import upward from it (eslint-plugin-boundaries).
+// AppShell wraps here rather than inside the page: `app/layouts` is app-layer, and
+// pages may not import upward from it.
 export const Route = createFileRoute('/_app/discover')({
     validateSearch: discoverSearchSchema,
     component: RouteComponent,

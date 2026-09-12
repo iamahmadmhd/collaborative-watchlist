@@ -1,16 +1,20 @@
 import { describe, it } from 'vitest';
 
-// SRS §6.1 Authorization Test Matrix. Every cell here must be asserted against the
-// API layer (the generated Amplify data client, or a direct AppSync call) — never
-// against the UI. A passing "button is hidden" test proves nothing about the
-// security property (CLAUDE.md, "Authorization"). Fill each `it.todo` in as its
-// operation is implemented; do not mark done until the assertion hits the API.
-//
-// Owner/Editor/Viewer full CRUD boundaries: FR-MEM-9, NFR-SEC-2.
-// Non-member / removed-member deny-all: FR-MEM-4, FR-MEM-5, NFR-SEC-1.
+// SRS §6.1's authorization matrix. Every cell must be asserted against the API layer —
+// the generated data client or a direct AppSync call — never against the UI: a passing
+// "button is hidden" test proves nothing about the security property.
 
 type Actor = 'Owner' | 'Editor' | 'Viewer' | 'Non-member' | 'Removed member';
-type Operation = 'read items' | 'add item' | 'remove item' | 'rename list' | 'change membership' | 'delete list';
+type Operation =
+    | 'read items'
+    | 'add item'
+    | 'remove item'
+    | 'rename list'
+    | 'change membership'
+    | 'delete list'
+    // Two assertions, not one: that toggleWatched succeeds for the caller's own mark,
+    // and that updateWatchlistItem cannot reach watchedBy at all.
+    | 'toggle watched';
 
 const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
     Owner: {
@@ -20,6 +24,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'allow',
         'change membership': 'allow',
         'delete list': 'allow',
+        'toggle watched': 'allow',
     },
     Editor: {
         'read items': 'allow',
@@ -28,6 +33,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'allow',
         'change membership': 'deny',
         'delete list': 'deny',
+        'toggle watched': 'allow',
     },
     Viewer: {
         'read items': 'allow',
@@ -36,6 +42,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'deny',
         'change membership': 'deny',
         'delete list': 'deny',
+        'toggle watched': 'allow',
     },
     'Non-member': {
         'read items': 'deny',
@@ -44,6 +51,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'deny',
         'change membership': 'deny',
         'delete list': 'deny',
+        'toggle watched': 'deny',
     },
     'Removed member': {
         'read items': 'deny',
@@ -52,6 +60,7 @@ const matrix: Record<Actor, Record<Operation, 'allow' | 'deny'>> = {
         'rename list': 'deny',
         'change membership': 'deny',
         'delete list': 'deny',
+        'toggle watched': 'deny',
     },
 };
 

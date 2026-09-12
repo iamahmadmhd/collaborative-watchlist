@@ -2,17 +2,10 @@ import { forwardRef, useId } from 'react';
 import { Field } from '@base-ui/react/field';
 import { tv } from 'tailwind-variants';
 
-// Design System §3.5, §2.5. Base UI's Field provides label/description/error ARIA
-// wiring only — validation ownership belongs entirely to react-hook-form + Zod
-// (System Design §2.5). `invalid` and the Field.Error `match` prop are therefore
-// always driven from RHF's fieldState, never from Base UI's own `validate`.
-// "Native inputs use a register" (§2.5) — this wraps a plain <input> via
-// Field.Control, so callers spread react-hook-form's register() return value
-// directly onto it; no Controller needed here (unlike Select/Combobox/OTPField).
-//
-// Visual language matches docs/design/ (Auth.dc.html) as of v1.2: monospace
-// uppercase label, 3px radius, accent focus ring via color-mix. Applied via CSS
-// text-transform rather than requiring callers to pass pre-uppercased label text.
+// Base UI's Field supplies label/description/error ARIA wiring only: validation belongs
+// entirely to react-hook-form, so `invalid` and Field.Error's `match` are always driven
+// from RHF's fieldState, never Base UI's own `validate`. This wraps a plain <input>, so
+// callers spread register() straight onto it — no Controller, unlike Select and OTPField.
 
 const textField = tv({
     slots: {
@@ -36,11 +29,9 @@ const textField = tv({
 });
 
 export interface TextFieldProps extends Omit<React.ComponentProps<typeof Field.Control>, 'id' | 'className'> {
-    // Narrowed from Base UI's `string | ((state) => string | undefined)`: tv()'s
-    // className merge only accepts plain ClassNameValue (string/array), and no
-    // caller in this codebase needs the function-of-state form — passing one
-    // through unchanged would type-check as `any` and fail at runtime, not just
-    // at the type level.
+    // Narrowed from Base UI's `string | ((state) => string | undefined)`: tv()'s merge
+    // accepts only a plain ClassNameValue, so a function form would type-check as `any`
+    // and then fail at runtime.
     className?: string | undefined;
     rootClassName?: string | undefined;
     labelClassName?: string | undefined;
@@ -48,10 +39,8 @@ export interface TextFieldProps extends Omit<React.ComponentProps<typeof Field.C
     errorClassName?: string | undefined;
     label: string;
     description?: string;
-    // Explicitly `| undefined`, not just optional: callers pass RHF's
-    // `errors.field?.message` (typed `string | undefined`) directly, and this
-    // project has `exactOptionalPropertyTypes` on — `errorMessage?: string`
-    // alone rejects an explicit `undefined`, only an omitted property.
+    // Explicitly `| undefined`: callers pass RHF's `errors.field?.message` directly, and
+    // exactOptionalPropertyTypes rejects an explicit undefined against a plain optional.
     errorMessage?: string | undefined;
 }
 

@@ -3,11 +3,9 @@ import { z } from 'zod';
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { UsernamePage } from '../../../pages/auth/set-username';
 
-// The one route in the _auth group that requires a session rather than
-// forbidding one (System Design §2.5, ADR-011) — reached only after email
-// verification, with autoSignIn() already having run (verify.tsx). The
-// project-wide route guard is still deferred (CLAUDE.md; _auth/route.tsx's own
-// comment), so this route carries its own local check instead of waiting on it.
+// The one route in the _auth group that requires a session rather than forbidding
+// one: it is reached only after verification, with autoSignIn() already run. It
+// carries its own check because the shared guard covers `_app/**`, not this group.
 const searchSchema = z.object({
     redirect: z.string().optional(),
 });

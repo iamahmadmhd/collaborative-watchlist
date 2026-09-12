@@ -7,11 +7,9 @@ import {
 import { watchlistRoleQueryKey } from '../../../entities/watchlist/api/use-watchlist-role';
 import { WATCHLISTS_QUERY_KEY, type MyWatchlist } from '../../../entities/watchlist/api/use-watchlists';
 
-// FR-MEM-1/2/3/8/10. addMember's rejection reasons are distinct enough (a bad
-// username vs. a full list vs. a caller who isn't the Owner) that the dialog needs
-// the typed result, not a thrown Error — so unlike useRemoveMember/useLeaveWatchlist
-// below, a success:false response resolves normally here. Same shape as
-// claim-username's ClaimUsernameResult handling in pages/auth/set-username.tsx.
+// addMember's rejection reasons are distinct enough — a bad username, a full list, a
+// caller who isn't the Owner — that the dialog needs the typed result, so unlike the
+// hooks below a success:false response resolves normally here.
 export function useAddMember(watchlistId: string) {
     const queryClient = useQueryClient();
 
@@ -46,11 +44,9 @@ function membershipErrorMessage(error: string | null | undefined): string {
     }
 }
 
-// FR-MEM-4. Owner-only removal of another collaborator. Optimistically drops the row
-// from the members list — same onMutate/onError/onSettled shape as
-// manage-list-items' useRemoveListItem — with a thrown Error on a logical
-// (success:false) rejection too, so that rollback path also covers e.g. a stale
-// CONFLICT from a concurrent membership change (FR-MEM-8's optimistic lock).
+// Owner-only removal of another collaborator. Optimistically drops the row, and throws
+// on a logical rejection too so the rollback path also covers a stale CONFLICT from a
+// concurrent membership change.
 export function useRemoveMember(watchlistId: string) {
     const queryClient = useQueryClient();
     const queryKey = watchlistMembersQueryKey(watchlistId);
@@ -85,10 +81,9 @@ export function useRemoveMember(watchlistId: string) {
     });
 }
 
-// FR-MEM-5. Any collaborator (never the Owner — FR-MEM-6, enforced server-side) can
-// remove themselves. Unlike removing someone else, this list is no longer "my list"
-// afterward, so /lists' own cache is patched directly too, mirroring
-// useCreateWatchlist's own direct-seed reasoning rather than waiting on a refetch.
+// Any collaborator but the Owner can remove themselves. Unlike removing someone else,
+// the list is no longer theirs afterwards, so /lists' cache is patched directly rather
+// than waiting on a refetch.
 export function useLeaveWatchlist(watchlistId: string) {
     const queryClient = useQueryClient();
 
@@ -113,8 +108,7 @@ export function useLeaveWatchlist(watchlistId: string) {
     });
 }
 
-// FR-MEM-3's "change it afterwards" clause. Owner-only reassignment between Editor
-// and Viewer; same optimistic-list-patch shape as useRemoveMember.
+// Owner-only reassignment between Editor and Viewer.
 export function useChangeMemberRole(watchlistId: string) {
     const queryClient = useQueryClient();
     const queryKey = watchlistMembersQueryKey(watchlistId);

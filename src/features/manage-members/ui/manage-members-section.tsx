@@ -19,18 +19,13 @@ const ROLE_ITEMS: { value: AssignableRole; label: string }[] = [
     { value: 'VIEWER', label: 'Viewer' },
 ];
 
-// FR-MEM-1..10, replacing watchlist-detail-page's former read-only MembersRow. The
-// Owner sees an "Add collaborator" trigger and, per member, a role selector and a
-// remove control (NFR-USE-3: both a role change and a removal are destructive
-// enough to warrant a confirm — this component supplies that confirm for removal
-// itself, while a role change is reversible enough not to need one). A non-owner
-// collaborator sees everyone read-only, plus a "Leave" control on their own row
-// (FR-MEM-5) — never on the Owner's row (FR-MEM-6, also enforced server-side).
+// The Owner sees an "Add collaborator" trigger plus a role selector and remove control
+// per member; a removal is confirmed, a role change is reversible enough not to be. A
+// non-owner sees everyone read-only plus a "Leave" control on their own row, never on
+// the Owner's.
 //
-// This is presentational gating only (CLAUDE.md's Authorization section):
-// addMember/removeMember/changeMemberRole/leaveWatchlist all re-check the caller
-// server-side (membership/handler.ts) regardless of what this component decides
-// to render.
+// All of that gating is presentational — every membership mutation re-checks the caller
+// server-side regardless of what this renders.
 export function ManageMembersSection({
     watchlistId,
     role,

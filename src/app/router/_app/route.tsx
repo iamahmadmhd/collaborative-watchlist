@@ -3,22 +3,16 @@ import { fetchAuthSession } from 'aws-amplify/auth';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../../../shared/lib/query-client';
 
-// Route guards (v1.1), CLAUDE.md / FR-DISC-6. Every route outside the auth
-// group (`_auth/**`) sits under this one pathless parent, so the check runs
-// once rather than per-route — the same fetchAuthSession()/tokens pattern
-// `_auth/set-username.tsx` used as its documented stand-in while this was
-// deferred (its own comment says so). beforeLoad's async nature *is* the
-// "session not yet resolved" state: the router shows the pending state while
-// this promise is in flight and only redirects once it has actually resolved
-// to "no tokens" — it never conflates the two by redirecting eagerly.
-// Presentational only, like useWatchlistRole: AppSync enforces auth regardless
-// of whether this check runs at all (NFR-SEC-1).
+// Every route outside the auth group sits under this one pathless parent, so the
+// guard runs once rather than per-route. beforeLoad's async nature is itself the
+// "session not yet resolved" state: the router holds the pending state while this
+// promise is in flight and redirects only once it resolves to "no tokens", so a
+// signed-in member is never bounced on a hard refresh. Presentational only — AppSync
+// enforces authorization regardless.
 //
-// QueryClientProvider is composed here, not in __root.tsx, on purpose: this
-// route (and everything under it) is its own code-split chunk
-// (`autoCodeSplitting`, vite.config.ts), so TanStack Query and `aws-amplify/api`
-// stay out of the eager auth-shell bundle (NFR-PERF-4, System Design §2.6) —
-// `_auth/**` never imports this module.
+// QueryClientProvider is composed here rather than in __root.tsx so TanStack Query
+// and aws-amplify/api stay out of the eager auth-shell chunk; `_auth/**` never
+// imports this module.
 export const Route = createFileRoute('/_app')({
     beforeLoad: async ({ location }) => {
         const { tokens } = await fetchAuthSession();

@@ -2,9 +2,8 @@ import { Link } from '@tanstack/react-router';
 import type { ShellSection } from './shell-sidebar';
 import { BookmarkIcon, CogIcon, MagnifyingGlassIcon, QueueListIcon } from '@heroicons/react/24/solid';
 
-// Reuses ShellSidebar's section type (rather than its own wider union, as before
-// Settings existed) — both nav chrome pieces now agree on the same four
-// destinations, matching AppShell passing one `active` value to both.
+// Reuses ShellSidebar's section type so both nav pieces agree on the same four
+// destinations and AppShell can pass one `active` value to each.
 export type TabSection = ShellSection;
 
 const TABS: { label: string; section: TabSection; to: string; icon: typeof MagnifyingGlassIcon }[] = [
@@ -14,7 +13,7 @@ const TABS: { label: string; section: TabSection; to: string; icon: typeof Magni
     { label: 'Settings', section: 'Settings', to: '/settings', icon: CogIcon },
 ];
 
-// docs/design/Tab Bar.dc.html, verbatim — mobile-only bottom nav.
+// Mobile-only bottom nav.
 export function TabBar({ active, className }: { active: TabSection; className?: string }) {
     return (
         <nav className={`border-border bg-raised flex flex-none border-t pt-2.25 pb-6 ${className ?? ''}`}>

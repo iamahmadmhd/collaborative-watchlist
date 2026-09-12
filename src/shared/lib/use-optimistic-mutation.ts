@@ -1,23 +1,15 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 
-// Shared onMutate/onError/onSettled scaffold (cancel in-flight fetches, snapshot
-// the current cache entry, optimistically write the new value, restore the
-// snapshot on failure, and refetch once settled — System Design §7.2), extracted
-// from features/save-movie's useToggleSave, features/toggle-watched's
-// useToggleWatched, and features/manage-list-items's useToggleListItem/
-// useRemoveListItem, which had each hand-rolled the identical sequence.
+// The shared onMutate/onError/onSettled scaffold: cancel in-flight fetches, snapshot
+// the cache entry, write optimistically, restore on failure, refetch once settled.
 //
-// `queryKey` takes the mutation's own variables because one caller
-// (useToggleListItem) needs a key that depends on which movie was toggled, not
-// just the watchlist it's scoped to — a plain fixed QueryKey can't express that,
-// so every caller supplies a `(variables) => QueryKey` function even when their
-// own key never actually varies with the variables.
+// `queryKey` takes the mutation's variables because one caller needs a key that depends
+// on which movie was toggled, so every caller supplies a function even when its own key
+// never varies.
 //
-// Restoring `context.previous` unconditionally (rather than `if (previous)`)
-// matters for TData shapes like `boolean` where a legitimate previous value
-// (`false`) would otherwise be skipped as falsy; TanStack Query already treats
-// `setQueryData(key, undefined)` as a no-op, so this stays correct for the
-// "nothing was cached yet" case too.
+// `context.previous` is restored unconditionally rather than behind `if (previous)`:
+// for a boolean TData a legitimate `false` would otherwise be skipped as falsy, and
+// setQueryData(key, undefined) is already a no-op for the nothing-cached case.
 export function useOptimisticMutation<TVariables, TData>({
     queryKey,
     mutationFn,

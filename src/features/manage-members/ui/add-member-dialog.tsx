@@ -8,12 +8,8 @@ import { Select } from '../../../shared/ui/select';
 import { DialogClose, DialogPopup, DialogRoot, DialogTrigger } from '../../../shared/ui/dialog';
 import { useAddMember } from '../api/manage-members';
 
-// FR-MEM-1/2/3/10: Owner adds a collaborator by @username, choosing Editor or
-// Viewer. select.tsx's own header comment names this dialog as its second caller
-// (after the genre filter). USERNAME_NOT_FOUND / ALREADY_MEMBER map to a field
-// error since they're about the username the Owner just typed; every other
-// rejection (NOT_OWNER, MEMBER_CAP_REACHED, CONFLICT, INVALID_ROLE) is a root
-// error — none of them point at a specific field.
+// USERNAME_NOT_FOUND and ALREADY_MEMBER map to a field error, since both are about the
+// username just typed; every other rejection is a root error, pointing at no field.
 const schema = z.object({
     username: z.string().trim().toLowerCase().min(1, 'Username is required'),
 });

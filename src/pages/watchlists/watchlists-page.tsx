@@ -5,12 +5,8 @@ import { CreateWatchlistDialog } from '../../features/create-watchlist/ui/create
 import { formatRelativeTime } from '../../shared/lib/format-relative-time';
 import { QueryState } from '../../shared/ui/query-state';
 
-// docs/design/Watchlists.dc.html. Member avatars/count per row are dropped — see
-// entities/watchlist/api/use-watchlists.ts's own comment on why that data isn't
-// cheaply available on this screen. The dashed "start a list" tip is the empty
-// state rather than a permanent footer under the row list (the board renders it
-// unconditionally, outside its sc-for loop, but that board only ever shows four
-// hardcoded sample rows — it never has an empty state to distinguish from).
+// The dashed "start a list" tip is the empty state, not a permanent footer under the
+// row list.
 export function WatchlistsPage() {
     const watchlistsQuery = useWatchlists();
     const count = watchlistsQuery.data?.length;
@@ -92,8 +88,6 @@ function WatchlistsList({ watchlistsQuery }: { watchlistsQuery: ReturnType<typeo
     );
 }
 
-// FR-LIST-5's row is now the entry point into /lists/:id (watchlist-detail-page.tsx)
-// — the only reachable path there besides typing the URL directly.
 function WatchlistRow({ watchlist }: { watchlist: MyWatchlist }) {
     return (
         <Link

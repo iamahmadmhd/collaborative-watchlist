@@ -1,10 +1,9 @@
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { tv } from 'tailwind-variants';
-import { useToggleWatched } from '../api/watch-status';
+import { useToggleWatched } from '../api/toggle-watched';
 
-// FR-WATCH-1: any member who can read this item — Owner, Editor, or Viewer
-// alike — may toggle it, unlike the Editor-only remove control next to it in
-// watchlist-detail-page.tsx. No gating prop here for that reason.
+// Any member who can read the item may toggle it, Viewers included — unlike the
+// Editor-only remove control beside it, so there is no gating prop here.
 const toggle = tv({
     base: 'flex flex-none items-center justify-center gap-1 text-xs disabled:cursor-not-allowed disabled:opacity-60',
     variants: {

@@ -7,22 +7,16 @@ import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { env } from '$amplify/env/watchlist-item';
 import type { Schema } from '../../data/resource';
 
-// watchlist-item — System Design §4.2, §4.4, ADR-001, FR-ITEM-1/2/4
+// Creates a WatchlistItem. See resource.ts for why this function exists and why the
+// parent read and the write take different paths (raw DynamoDB in, AppSync out).
 //
-// See resource.ts for why this function exists and why its parent read and its
-// write deliberately use two different paths (raw DynamoDB in, AppSync out).
+// Everything security-relevant is derived here, never taken from the request:
+// editors/viewers from the parent Watchlist, addedBy from the caller's sub, addedAt
+// from the server clock. The client supplies only the film snapshot and the
+// fractional rank, neither of which authorizes anything.
 //
-// Everything security-relevant on the new item is derived here, never taken from
-// the request: `editors`/`viewers` from the parent Watchlist's current arrays,
-// `addedBy` from the caller's own Cognito sub, `addedAt` from the server clock.
-// The client supplies only the film snapshot (FR-TMDB-5) and the fractional rank
-// it computed for the append position (ADR-006) — neither of which authorizes
-// anything.
-//
-// FR-ITEM-2 (no duplicates) is still enforced by WatchlistItem's composite
-// identifier, not by a check here: the generated create resolver PutItems
-// conditioned on attribute_not_exists of the primary key, so a concurrent double
-// add fails the second write rather than racing a read.
+// Duplicate prevention stays with WatchlistItem's composite identifier: the create
+// resolver's attribute_not_exists condition fails the second concurrent write.
 
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env);
 Amplify.configure(resourceConfig, libraryOptions);
@@ -52,18 +46,15 @@ export const handler: AppSyncResolverHandler<Args, Result> = async (event) => {
         return { success: false, error: 'NOT_FOUND' };
     }
 
-    // FR-ITEM-1: the Owner and Editors add films; Viewers and non-members cannot.
-    // This is the check the generated resolver structurally could not make — it
-    // only ever saw the arrays the caller sent, never the parent row.
+    // The check the generated resolver structurally could not make: it only ever saw
+    // the arrays the caller sent, never the parent row.
     const editors = watchlist.editors ?? [];
     if (watchlist.ownerId !== callerId && !editors.includes(callerId)) {
         return { success: false, error: 'NOT_ALLOWED' };
     }
 
-    // permission-fanout/handler.ts's header explains why ownerId is folded into
-    // `editors` rather than copied verbatim: WatchlistItem has no single-owner
-    // field, so the Owner's own item access depends entirely on being present in
-    // this array, and Watchlist.editors only ever holds EDITOR-role userIds.
+    // ownerId is folded into `editors` rather than copied verbatim: WatchlistItem has
+    // no owner field, and Watchlist.editors holds only EDITOR-role members.
     const { errors } = await client.models.WatchlistItem.create({
         watchlistId,
         tmdbId,
@@ -88,8 +79,8 @@ export const handler: AppSyncResolverHandler<Args, Result> = async (event) => {
     return { success: true, error: null };
 };
 
-// Same shape as claim-username's own check — the generated resolver surfaces a
-// failed attribute_not_exists as a GraphQL error, not a typed result.
+// The generated resolver surfaces a failed attribute_not_exists as a GraphQL error,
+// not a typed result.
 function isConditionalCheckFailure(errors: ReadonlyArray<{ errorType?: string; message?: string }>): boolean {
     return errors.some(
         (e) =>

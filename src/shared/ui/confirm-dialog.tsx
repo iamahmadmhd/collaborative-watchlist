@@ -2,12 +2,9 @@ import { useState, type ReactElement } from 'react';
 import { Button } from './button';
 import { DialogClose, DialogPopup, DialogRoot, DialogTrigger } from './dialog';
 
-// NFR-USE-3's confirm-dialog convention, extracted from four near-identical
-// copies (manage-members-section.tsx's RemoveMemberButton/LeaveButton,
-// settings-page.tsx's "sign out everywhere" dialog and DeleteAccountRow): open
-// state, an error slot that clears when the dialog closes, and a Cancel/confirm
-// pair where confirm shows its own pending state and keeps the dialog open on
-// failure so the error stays visible.
+// The confirm-dialog convention for destructive actions: open state, an error slot that
+// clears on close, and a Cancel/confirm pair where confirm shows its own pending state
+// and keeps the dialog open on failure so the error stays visible.
 export function ConfirmDialog({
     trigger,
     title,

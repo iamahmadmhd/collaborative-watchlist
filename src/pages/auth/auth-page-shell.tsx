@@ -1,17 +1,8 @@
 import type { ReactNode } from 'react';
 
-// Design System §3, docs/design/Auth.dc.html (v1.4). Desktop: two-column split —
-// pitch copy + a sample attribution-stripe list on the left (raised background,
-// border-right), the form centered on the right. Mobile: a compact brand header
-// above the form only — the pitch copy itself doesn't repeat, matching the board.
-// The pitch panel is shared chrome across sign-up (which also handles returning
-// members — System Design §2.5, ADR-010) and verify, matching the board (present
-// outside its isSignup/isVerify conditional there).
-//
-// Deliberately NOT a pixel-for-pixel transcription of every inline style in the
-// board — this is a faithful adaptation (fonts, tokens, radii, spacing scale,
-// structure), not a literal copy. Screen-level layout beyond auth remains an open
-// item (CLAUDE.md, System Design §10).
+// Shared chrome for every auth screen. Desktop is a two-column split — pitch copy and
+// a sample attribution-stripe list on the left, the form centred on the right; mobile
+// drops to a compact brand header above the form alone.
 
 const SAMPLE_ITEMS: { title: string; year: string; by: string; colorVar: string }[] = [
     { title: 'Chungking Express', year: '1994', by: '@ada', colorVar: 'var(--m1)' },

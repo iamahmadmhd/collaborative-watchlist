@@ -1,47 +1,24 @@
 import type { AppSyncIdentityCognito, AppSyncResolverHandler } from 'aws-lambda';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import {
+    DeleteCommand,
+    DynamoDBDocumentClient,
+    GetCommand,
+    TransactWriteCommand,
+    UpdateCommand,
+} from '@aws-sdk/lib-dynamodb';
 import type { Schema } from '../../data/resource';
 import { batchWriteChunked, queryAllPages } from '../shared/dynamo-batch';
 import { conditionalCheckFailedAt } from '../shared/transact-write-errors';
 
-// delete-account — NFR-COMP-2 ("Members shall be able to delete their account, removing
-// their profile, saved films, watched records, and owned watchlists").
+// Deletes the caller's data across six tables. It does not delete the Cognito user
+// itself — the frontend calls deleteUser() after this mutation returns. That order
+// matters: a failure here leaves a still-signed-in member who can retry, and every
+// step below is idempotent against a partial prior run. The reverse order would strand
+// a logged-out member with orphaned data and no way to retry.
 //
-// This is deliberately the ONLY function in the app that touches seven tables. It does not
-// delete the Cognito user itself — the frontend calls aws-amplify/auth's self-service
-// deleteUser() (the user's own access token, no admin IAM grant needed) AFTER this mutation
-// returns success, per settings-page.tsx's DeleteAccountRow. Ordering is intentional: if this
-// handler throws partway through, the member is still a valid, signed-in Cognito user who can
-// simply retry — every step below is naturally idempotent against a partial prior run (see
-// each helper). If the Cognito deletion were to run first instead, a failure here would leave
-// a member permanently logged out with orphaned data and no way to retry through the UI at all.
-//
-// Two design decisions this handler encodes, both made explicitly (not invented) because
-// settings-page.tsx flagged them as open gaps rather than silently picking an answer:
-//
-// 1. A watchlist this member OWNS is cascade-deleted in full — the list, every
-//    WatchlistMember row on it (every collaborator, not just this member), and every
-//    WatchlistItem. Collaborators lose the list without separate warning; simpler and no
-//    orphaned ownership beats the alternative (blocking account deletion on ownership
-//    transfer) for a first release.
-// 2. A watchlist this member does NOT own: leave it (removeSelfFromWatchlist below, the
-//    same editors/viewers CAS + WatchlistMember delete membership/handler.ts's
-//    leaveWatchlist performs) rather than touching WatchlistItem.addedBy at all.
-//    WatchlistItem.addedBy has no way to represent "nobody" (a.string().required()) and
-//    doesn't need one: watchlist-detail-page.tsx's memberLabels map is built only from the
-//    CURRENT WatchlistMember list (`useWatchlistMembers`), so once this member's
-//    WatchlistMember row is gone, `memberLabels.get(item.addedBy)` naturally misses and the
-//    page already falls back to "A member" — exactly "films you added to shared lists stay,
-//    without your name," for free, with no schema change.
-//
-// Known limitation, not silently worked around: WatchStatus has no reverse index from
-// watchlistId to its members (its only secondary index, byUserAndList, is keyed by userId).
-// When an OWNED watchlist is cascade-deleted here, OTHER collaborators' WatchStatus rows for
-// items on that list are not cleaned up — they become unreachable orphans (nothing queries
-// WatchStatus without a live watchlist context to scope it to, so this is inert, not a leak),
-// not deleted. Closing that fully would need a new GSI on WatchStatus keyed by watchlistId —
-// a schema change, not something to add silently inside this handler.
+// Owned watchlists are cascade-deleted in full; watchlists owned by someone else are
+// merely left. See System Design §4.2 for both decisions and their consequences.
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
@@ -50,11 +27,11 @@ const WATCHLIST_TABLE = process.env.WATCHLIST_TABLE_NAME!;
 const WATCHLIST_MEMBER_TABLE = process.env.WATCHLIST_MEMBER_TABLE_NAME!;
 const WATCHLIST_ITEM_TABLE = process.env.WATCHLIST_ITEM_TABLE_NAME!;
 const SAVED_MOVIE_TABLE = process.env.SAVED_MOVIE_TABLE_NAME!;
-const WATCH_STATUS_TABLE = process.env.WATCH_STATUS_TABLE_NAME!;
 const USER_PROFILE_TABLE = process.env.USER_PROFILE_TABLE_NAME!;
 const USERNAME_TABLE = process.env.USERNAME_TABLE_NAME!;
 
 const MAX_LEAVE_RETRIES = 3; // bounded retry on the editors/viewers optimistic-lock CAS below
+const MAX_UNMARK_RETRIES = 3; // bounded retry on the watchedBy positional-delete CAS below
 
 type DeleteAccountResult = Schema['deleteAccount']['returnType'];
 
@@ -69,6 +46,12 @@ interface WatchlistRecord {
     viewers?: string[];
 }
 
+interface WatchlistItemKey {
+    watchlistId: string;
+    tmdbId: string;
+    watchedBy?: string[];
+}
+
 async function queryAll(
     tableName: string,
     keyConditionExpression: string,
@@ -78,8 +61,8 @@ async function queryAll(
     return queryAllPages(docClient, { tableName, keyConditionExpression, expressionAttributeValues, indexName });
 }
 
-// Naturally idempotent: deleting a key that's already gone is a no-op, not an error, so
-// re-running this handler after a partial prior failure never fails on already-cleaned rows.
+// Idempotent: deleting an already-absent key is a no-op, so a re-run after a partial
+// failure never trips on already-cleaned rows.
 async function batchDeleteItems(tableName: string, keys: readonly Record<string, unknown>[]): Promise<void> {
     await batchWriteChunked(
         docClient,
@@ -89,10 +72,8 @@ async function batchDeleteItems(tableName: string, keys: readonly Record<string,
     );
 }
 
-// Decision 1 (file header): full cascade for a list this member owns. Order — items, then
-// memberships, then the list itself — means a prior partial run leaves, at worst, a
-// Watchlist row with no items/members left to re-query on retry (queryAll naturally returns
-// empty), never the reverse (items/members outliving a deleted parent).
+// Items, then memberships, then the list itself: a partial run leaves at worst an empty
+// Watchlist row to re-query, never items outliving a deleted parent.
 async function cascadeDeleteOwnedWatchlist(watchlistId: string): Promise<void> {
     const items = await queryAll(WATCHLIST_ITEM_TABLE, 'watchlistId = :watchlistId', {
         ':watchlistId': watchlistId,
@@ -113,14 +94,59 @@ async function cascadeDeleteOwnedWatchlist(watchlistId: string): Promise<void> {
     await docClient.send(new DeleteCommand({ TableName: WATCHLIST_TABLE, Key: { id: watchlistId } }));
 }
 
-// Decision 2 (file header): membership/handler.ts's removeFromWatchlist(..., requireOwnerCaller:
-// false) reimplemented here rather than called — that mutation runs under the caller's OWN
-// Cognito identity (event.identity.sub), which this handler cannot forward: it runs under this
-// function's own IAM identity, invoked once per membership rather than once per AppSync request.
-// Same optimistic-lock shape as the original: read editors/viewers, retry the whole
-// read-modify-write up to MAX_LEAVE_RETRIES times against a concurrent membership change on the
-// same watchlist (rare, bounded by FR-MEM-7's 20-member cap) rather than surfacing CONFLICT to a
-// caller with no per-list error channel to report it through.
+// Strips the caller from watchedBy on every item of a list they only collaborate on. A
+// list they own needs none of this: its items are deleted outright. See System Design
+// §4.2 for how this differs from a member merely leaving a list.
+//
+// An element is removed by index under a positional condition rather than by rewriting
+// the array, so a concurrent mark by another member cannot be clobbered; see
+// toggle-watched's handler for the same mechanism and why the index needs re-reading.
+async function stripWatchedMarks(watchlistId: string, callerId: string): Promise<void> {
+    const items = (await queryAll(WATCHLIST_ITEM_TABLE, 'watchlistId = :watchlistId', {
+        ':watchlistId': watchlistId,
+    })) as unknown as WatchlistItemKey[];
+
+    for (const item of items) {
+        for (let attempt = 0; attempt < MAX_UNMARK_RETRIES; attempt++) {
+            const watchedBy =
+                attempt === 0 ? (item.watchedBy ?? []) : ((await readWatchedBy(item.watchlistId, item.tmdbId)) ?? []);
+            const index = watchedBy.indexOf(callerId);
+            if (index === -1) {
+                break; // never marked, already stripped, or the item is gone
+            }
+
+            try {
+                await docClient.send(
+                    new UpdateCommand({
+                        TableName: WATCHLIST_ITEM_TABLE,
+                        Key: { watchlistId: item.watchlistId, tmdbId: item.tmdbId },
+                        UpdateExpression: `REMOVE watchedBy[${index}]`,
+                        ConditionExpression: `watchedBy[${index}] = :callerId`,
+                        ExpressionAttributeValues: { ':callerId': callerId },
+                    }),
+                );
+                break;
+            } catch (err) {
+                if (err instanceof ConditionalCheckFailedException) {
+                    continue; // the list shifted under us — re-read and retry
+                }
+                throw err;
+            }
+        }
+    }
+}
+
+async function readWatchedBy(watchlistId: string, tmdbId: string): Promise<string[] | undefined> {
+    const { Item } = await docClient.send(
+        new GetCommand({ TableName: WATCHLIST_ITEM_TABLE, Key: { watchlistId, tmdbId } }),
+    );
+    return (Item as WatchlistItemKey | undefined)?.watchedBy;
+}
+
+// membership's leaveWatchlist reimplemented rather than called: that mutation runs under
+// the caller's own Cognito identity, which this handler — running under its own IAM
+// identity, once per membership — cannot forward. Same optimistic lock, but it retries
+// the read-modify-write instead of surfacing CONFLICT to a caller with nowhere to show it.
 async function leaveWatchlist(watchlistId: string, callerId: string): Promise<void> {
     for (let attempt = 0; attempt < MAX_LEAVE_RETRIES; attempt++) {
         const { Item } = await docClient.send(new GetCommand({ TableName: WATCHLIST_TABLE, Key: { id: watchlistId } }));
@@ -193,20 +219,10 @@ export const handler: AppSyncResolverHandler<Record<string, unknown>, DeleteAcco
         if (membership.role === 'OWNER') {
             await cascadeDeleteOwnedWatchlist(membership.watchlistId);
         } else {
+            await stripWatchedMarks(membership.watchlistId, callerId);
             await leaveWatchlist(membership.watchlistId, callerId);
         }
     }
-
-    const watchStatuses = await queryAll(
-        WATCH_STATUS_TABLE,
-        'userId = :userId',
-        { ':userId': callerId },
-        'byUserAndList',
-    );
-    await batchDeleteItems(
-        WATCH_STATUS_TABLE,
-        watchStatuses.map((status) => ({ userId: status.userId, itemId: status.itemId })),
-    );
 
     const savedMovies = await queryAll(SAVED_MOVIE_TABLE, 'userId = :userId', { ':userId': callerId }, 'byUserAndDate');
     await batchDeleteItems(

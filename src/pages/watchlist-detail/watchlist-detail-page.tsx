@@ -4,50 +4,37 @@ import { useWatchlist } from '../../entities/watchlist/api/use-watchlist';
 import { useWatchlistRole } from '../../entities/watchlist/api/use-watchlist-role';
 import { useWatchlistMembers } from '../../entities/watchlist/api/use-watchlist-members';
 import { useWatchlistItems } from '../../entities/watchlist/api/watchlist-items';
-import { canEditWatchlist } from '../../entities/watchlist/model/watchlist';
+import { canEditWatchlist, isWatchedBy, watchedByIds } from '../../entities/watchlist/model/watchlist';
 import type { WatchlistItemRecord, WatchlistRecord } from '../../entities/watchlist/model/watchlist';
 import { RoleBadge } from '../../entities/watchlist/ui/role-badge';
 import { memberColor } from '../../entities/member/model/member-color';
+import { useCurrentUser } from '../../entities/member/api/use-current-user';
 import { posterUrl } from '../../entities/movie/model/movie';
 import { HATCH_STYLE } from '../../entities/movie/ui/movie-card';
 import { formatRelativeTime } from '../../shared/lib/format-relative-time';
 import { useRemoveListItem } from '../../features/manage-list-items/api/manage-list-items';
 import { ManageMembersSection } from '../../features/manage-members/ui/manage-members-section';
-import { useWatchedSet } from '../../features/toggle-watched/api/watch-status';
 import { WatchedToggleButton } from '../../features/toggle-watched/ui/watched-toggle-button';
+import { WatchedByLine } from '../../features/toggle-watched/ui/watched-by-line';
 import { BackHeader, MobileBackHeader } from '../../shared/ui/back-header';
 import { QueryState } from '../../shared/ui/query-state';
 
-// docs/design has no Watchlist Detail mock (only README.md — see docs/design/
-// and CLAUDE.md's design-reference note); this follows the same fallback
-// create-watchlist-dialog.tsx already established for a screen with no board
-// to transcribe: token system + the layout conventions the other screens in
-// this codebase already settled on (desktop/mobile split, skeleton/empty/error
-// states), rather than inventing screen composition from nothing.
-//
-// FR-LIST-2/3 (rename/re-describe) is still deliberately not built here — a
-// separate FSD feature slice from both manage-list-items and manage-members
-// (System Design §2.2's module structure lists it apart), out of scope for
-// this screen so far. FR-ITEM-5 (drag reorder, dnd-kit, "Should") is likewise
-// deferred — this only appends (ADR-006's rankAfter), it never reorders.
-// Membership (FR-MEM-1..10) is now live via ManageMembersSection below.
-// Watched tracking (FR-WATCH-1..4) is now live via WatchedToggleButton and
-// ListHeading's progress line below.
+// Items are appended, never reordered — see System Design §11 for the deferred
+// rename/re-describe and drag-reorder features.
 export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
     const navigate = useNavigate();
     const watchlistQuery = useWatchlist(watchlistId);
     const roleQuery = useWatchlistRole(watchlistId);
     const membersQuery = useWatchlistMembers(watchlistId);
     const itemsQuery = useWatchlistItems(watchlistId);
-    const watchedQuery = useWatchedSet(watchlistId);
+    const currentUser = useCurrentUser();
 
     function handleBack() {
         window.history.back();
     }
 
-    // FR-MEM-5: once a member leaves, this screen no longer resolves for them
-    // (Watchlist's authorization has no rule matching a non-member) — navigate
-    // away rather than let the next refetch render the "doesn't exist" error path.
+    // Once a member leaves, this screen no longer resolves for them, so navigate away
+    // rather than let the next refetch render the "doesn't exist" path.
     function handleLeft() {
         void navigate({ to: '/lists' });
     }
@@ -69,6 +56,10 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
 
     const watchlist = watchlistQuery.data;
     const canEdit = canEditWatchlist(roleQuery.data);
+    const currentUserId = currentUser.data?.id;
+    // Both counts come off the same array, so they cannot disagree.
+    const items = itemsQuery.data;
+    const watchedCount = items?.filter((item) => isWatchedBy(item, currentUserId)).length;
     const memberLabels = new Map((membersQuery.data ?? []).map((m) => [m.userId, m.displayName ?? m.username ?? '?']));
 
     return (
@@ -80,8 +71,8 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                     <ListHeading
                         watchlist={watchlist}
                         role={roleQuery.data}
-                        itemCount={itemsQuery.data?.length}
-                        watchedCount={watchedQuery.data?.size}
+                        itemCount={items?.length}
+                        watchedCount={watchedCount}
                     />
                     <ManageMembersSection
                         watchlistId={watchlistId}
@@ -93,7 +84,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                         itemsQuery={itemsQuery}
                         canEdit={canEdit}
                         memberLabels={memberLabels}
-                        watchedSet={watchedQuery.data}
+                        currentUserId={currentUserId}
                         watchlistId={watchlistId}
                         className='mt-6'
                     />
@@ -107,8 +98,8 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                     <ListHeading
                         watchlist={watchlist}
                         role={roleQuery.data}
-                        itemCount={itemsQuery.data?.length}
-                        watchedCount={watchedQuery.data?.size}
+                        itemCount={items?.length}
+                        watchedCount={watchedCount}
                     />
                     <ManageMembersSection
                         watchlistId={watchlistId}
@@ -120,7 +111,7 @@ export function WatchlistDetailPage({ watchlistId }: { watchlistId: string }) {
                         itemsQuery={itemsQuery}
                         canEdit={canEdit}
                         memberLabels={memberLabels}
-                        watchedSet={watchedQuery.data}
+                        currentUserId={currentUserId}
                         watchlistId={watchlistId}
                         className='mt-4'
                     />
@@ -141,9 +132,8 @@ function ListHeading({
     itemCount: number | undefined;
     watchedCount: number | undefined;
 }) {
-    // itemCount comes from the FR-LIST-6 stream-maintained counter (Watchlist.itemCount)
-    // until the real-time item list resolves, then switches to the actual length — the
-    // former can be briefly stale after a rapid add/remove (§5.4, Known Limitation #2).
+    // The stream-maintained counter until the item list resolves, then the actual
+    // length — the former can be briefly stale after a rapid add or remove.
     const count = itemCount ?? watchlist.itemCount ?? 0;
 
     return (
@@ -157,9 +147,8 @@ function ListHeading({
             {watchlist.description && <p className='text-muted font-body max-w-160 text-sm'>{watchlist.description}</p>}
             <span className='text-muted font-mono text-[11px]'>
                 {count} item{count === 1 ? '' : 's'}
-                {/* FR-WATCH-4: this member's own watched progress, e.g. "4 of 12
-                    watched" — undefined (not 0) while useWatchedSet is still
-                    loading, so this doesn't flash "0 watched" on every open. */}
+                {/* undefined rather than 0 until the items resolve, so this does not
+                    flash "0 watched" on every open. */}
                 {watchedCount !== undefined && itemCount !== undefined && (
                     <>
                         {' '}
@@ -175,14 +164,14 @@ function ItemsSection({
     itemsQuery,
     canEdit,
     memberLabels,
-    watchedSet,
+    currentUserId,
     watchlistId,
     className,
 }: {
     itemsQuery: ReturnType<typeof useWatchlistItems>;
     canEdit: boolean;
     memberLabels: Map<string, string>;
-    watchedSet: Set<string> | undefined;
+    currentUserId: string | undefined;
     watchlistId: string;
     className?: string;
 }) {
@@ -225,7 +214,8 @@ function ItemsSection({
                             item={item}
                             canEdit={canEdit}
                             addedByLabel={memberLabels.get(item.addedBy) ?? 'A member'}
-                            isWatched={watchedSet?.has(item.tmdbId) ?? false}
+                            memberLabels={memberLabels}
+                            currentUserId={currentUserId}
                             watchlistId={watchlistId}
                         />
                     ))}
@@ -239,23 +229,26 @@ function ItemRow({
     item,
     canEdit,
     addedByLabel,
-    isWatched,
+    memberLabels,
+    currentUserId,
     watchlistId,
 }: {
     item: WatchlistItemRecord;
     canEdit: boolean;
     addedByLabel: string;
-    isWatched: boolean;
+    memberLabels: Map<string, string>;
+    currentUserId: string | undefined;
     watchlistId: string;
 }) {
     const removeItem = useRemoveListItem(watchlistId);
     const poster = posterUrl(item.posterPath, 'w185');
+    const watchedBy = watchedByIds(item);
+    const isWatched = isWatchedBy(item, currentUserId);
 
     return (
         <div className='border-border bg-raised flex items-center gap-3.5 overflow-hidden rounded-sm border'>
-            {/* Design System §3.4, the Attribution Stripe: the signature element — a
-                thin bar in the colour of whoever added this item, so a busy shared
-                list reads as a scannable spectrum of contributors at a glance. */}
+            {/* The attribution stripe: a thin bar in the colour of whoever added this
+                item. See Design System §3.4. */}
             <div className='h-16 w-1.5 flex-none self-stretch' style={{ background: memberColor(item.addedBy) }} />
             <div
                 className='bg-surface aspect-2/3 h-16 flex-none overflow-hidden rounded-xs'
@@ -276,6 +269,7 @@ function ItemRow({
                     Added by {addedByLabel}
                     {item.addedAt && <> · {formatRelativeTime(item.addedAt)}</>}
                 </span>
+                <WatchedByLine watchedBy={watchedBy} memberLabels={memberLabels} currentUserId={currentUserId} />
             </div>
             <WatchedToggleButton
                 watchlistId={watchlistId}

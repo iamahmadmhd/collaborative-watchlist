@@ -1,8 +1,26 @@
 # Software Requirements Specification
 
-## Collaborative Movie Discovery & Watchlist Application
+## Repertory — Collaborative Movie Discovery & Watchlist Application
 
-Version: 1.6 Date: 10 September 2026 Status: Approved
+Version: 1.7 Date: 12 September 2026 Status: Approved
+
+Revision note (v1.7): Watched state becomes shared rather than private. A collaborative
+watchlist whose central signal — who has actually seen a film — is invisible to the
+people collaborating on it withholds the thing that makes the list worth sharing, so
+FR-WATCH-3 is inverted: every member of a watchlist now sees every member's marks.
+FR-WATCH-5 and §7's "aggregate watched state" exclusion are narrowed accordingly, since
+attributing a mark to a member is that aggregate; what stays out of scope is the tier
+above it — counts, leaderboards, rollups. FR-WATCH-5 is repurposed to carry the
+integrity property that replaces the lost privacy one: a member's mark is theirs alone
+to set or clear. V-3 asserts the same thing at the API layer, in place of the privacy
+property it used to assert. FR-WATCH-6 (new) records that a departing member's marks
+stay put, attributed to nobody, rather than being stripped — the choice §4.2 already
+made for the byline on items they added. NFR-REL-4 (new) states the orphan invariant
+that NFR-REL-3 implied for watchlist deletion but nothing stated for item removal: the
+gap a reported bug surfaced, and the reason this revision exists. §6.1 gains a "toggle
+watched" column, the one operation a Viewer may perform. Affected: FR-WATCH-3,
+FR-WATCH-5, FR-WATCH-6 (new), NFR-REL-4 (new), V-3, §6.1, §7. See System Design v1.8
+§5.1 and ADR-014.
 
 Revision note (v1.6): A member reported being unable to load poster/cast images —
 image.tmdb.org is unreachable from their network. FR-TMDB-4 already required the
@@ -217,13 +235,14 @@ These are fixed inputs to the design phase, not outcomes of it:
 
 ### 3.7 Watched Tracking
 
-| ID         | Requirement                                                                                   | Priority |
-| :--------- | :-------------------------------------------------------------------------------------------- | :------- |
-| FR-WATCH-1 | A member shall be able to mark any item on a watchlist they can read as watched or unwatched. | Must     |
-| FR-WATCH-2 | Watched state shall be recorded per member per item, independently of other members.          | Must     |
-| FR-WATCH-3 | A member's watched state shall be visible only to that member.                                | Must     |
-| FR-WATCH-4 | The system shall display a member's own watched progress for a watchlist (e.g. 4 of 12).      | Should   |
-| FR-WATCH-5 | Aggregate watched state across members is out of scope.                                       | —        |
+| ID         | Requirement                                                                                                          | Priority |
+| :--------- | :------------------------------------------------------------------------------------------------------------------- | :------- |
+| FR-WATCH-1 | A member shall be able to mark any item on a watchlist they can read as watched or unwatched.                        | Must     |
+| FR-WATCH-2 | Watched state shall be recorded per member per item, independently of other members.                                 | Must     |
+| FR-WATCH-3 | Every member of a watchlist shall see which members have marked each item as watched.                                | Must     |
+| FR-WATCH-4 | The system shall display a member's own watched progress for a watchlist (e.g. 4 of 12).                             | Should   |
+| FR-WATCH-6 | A member's watched mark shall survive their removal from the watchlist, attributed to an unidentified former member. | Should   |
+| FR-WATCH-5 | Only the member themselves shall be able to set or clear their own watched mark.                                     | Must     |
 
 ### 3.8 Real-Time Synchronisation
 
@@ -297,11 +316,12 @@ The sole external interface. Consumed server-side over HTTPS. Subject to TMDB's 
 
 ### 5.3 Reliability
 
-| ID        | Requirement                                                                          |
-| :-------- | :----------------------------------------------------------------------------------- |
-| NFR-REL-1 | Loss of TMDB availability shall not prevent authentication or access to stored data. |
-| NFR-REL-2 | Failed writes shall surface to the member; silent failure is not acceptable.         |
-| NFR-REL-3 | Deleting a watchlist shall not orphan its items, memberships, or watched records.    |
+| ID        | Requirement                                                                                       |
+| :-------- | :------------------------------------------------------------------------------------------------ |
+| NFR-REL-1 | Loss of TMDB availability shall not prevent authentication or access to stored data.              |
+| NFR-REL-2 | Failed writes shall surface to the member; silent failure is not acceptable.                      |
+| NFR-REL-3 | Deleting a watchlist shall not orphan its items, memberships, or watched records.                 |
+| NFR-REL-4 | Removing an item from a watchlist shall not leave a watched record for it behind, for any member. |
 
 ### 5.4 Usability and Accessibility
 
@@ -329,13 +349,17 @@ Authorization is the system's principal claim to correctness, and the area most 
 
 Every combination below shall have an automated test asserting allow or deny at the API layer, not the UI layer:
 
-| Actor          | Read items | Add item | Remove item | Rename list | Change membership | Delete list |
-| :------------- | :--------- | :------- | :---------- | :---------- | :---------------- | :---------- |
-| Owner          | allow      | allow    | allow       | allow       | allow             | allow       |
-| Editor         | allow      | allow    | allow       | allow       | deny              | deny        |
-| Viewer         | allow      | deny     | deny        | deny        | deny              | deny        |
-| Non-member     | deny       | deny     | deny        | deny        | deny              | deny        |
-| Removed member | deny       | deny     | deny        | deny        | deny              | deny        |
+| Actor          | Read items | Add item | Remove item | Rename list | Change membership | Delete list | Toggle watched |
+| :------------- | :--------- | :------- | :---------- | :---------- | :---------------- | :---------- | :------------- |
+| Owner          | allow      | allow    | allow       | allow       | allow             | allow       | allow          |
+| Editor         | allow      | allow    | allow       | allow       | deny              | deny        | allow          |
+| Viewer         | allow      | deny     | deny        | deny        | deny              | deny        | allow          |
+| Non-member     | deny       | deny     | deny        | deny        | deny              | deny        | deny           |
+| Removed member | deny       | deny     | deny        | deny        | deny              | deny        | deny           |
+
+"Toggle watched" is the one cell a Viewer may perform (FR-WATCH-1), and it is scoped to
+the caller's own mark: setting or clearing anyone else's is denied to every actor
+including the Owner (FR-WATCH-5, V-3).
 
 ### 6.2 Additional Verification Targets
 
@@ -343,7 +367,7 @@ Every combination below shall have an automated test asserting allow or deny at 
 | :--- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | V-1  | Concurrent claims on the same username: exactly one succeeds.                                                                                              |
 | V-2  | Revocation propagates fully within the NFR-SEC-4 window.                                                                                                   |
-| V-3  | A Viewer's watched state is invisible to the Owner.                                                                                                        |
+| V-3  | An Editor cannot set or clear another member's watched mark.                                                                                               |
 | V-4  | Two clients on one watchlist observe each other's item changes live.                                                                                       |
 | V-5  | The TMDB credential is absent from the client bundle and from all client-observable network traffic.                                                       |
 | V-6  | Username lookup returns no email address under any input.                                                                                                  |
@@ -362,7 +386,7 @@ Deliberately excluded from this release. Each is a viable extension; none is req
 - Social graph — following, profiles, public list discovery
 - Invitation by email address or shareable link
 - Member-authored film entries not present in TMDB
-- Aggregate watched state across collaborators
+- Aggregate watched state beyond per-item attribution — counts, leaderboards, "watched by everyone" rollups
 - Offline support, PWA installation, native applications
 - Television series, seasons, and episodes
 - Internationalisation and localisation
@@ -376,3 +400,11 @@ Still open:
 - Observability: logging, metrics, error tracking, alarm thresholds
 - Cost model at expected scale
 - Visual design of individual screens, beyond the token system and layout principles
+- Whether V-10 and NFR-SEC-3 require a carve-out for the image CDN introduced by
+  FR-TMDB-8. Both were written before that requirement existed and neither was amended
+  by v1.6: V-10 requires every TMDB-backed operation to reject an unauthenticated caller
+  at the API layer, and NFR-SEC-3 treats the authentication endpoints as the only
+  remaining unauthenticated surface — but artwork is now served from a public CloudFront
+  distribution that satisfies neither. Either the two need an explicit exception for
+  opaque public artwork (no user data crosses that path) or the surface needs closing.
+  See System Design §10 for the partial mitigation applied in the meantime.
